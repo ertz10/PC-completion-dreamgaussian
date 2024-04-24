@@ -8,11 +8,16 @@ import dearpygui.dearpygui as dpg
 import torch
 import torch.nn.functional as F
 
+import torchvision.transforms as T 
+from PIL import Image
+
 import trimesh
 import rembg
 
 from cam_utils import orbit_camera, OrbitCamera
 from mesh_renderer import Renderer
+
+import open3d as o3d
 
 # from kiui.lpips import LPIPS
 
@@ -61,6 +66,9 @@ class GUI:
         self.step = 0
         self.train_steps = 1  # steps per rendering loop
         # self.lpips_loss = LPIPS(net='vgg').to(self.device)
+
+        # CUSTOM
+        self.debug_step = 0
         
         # load input data from cmdline
         if self.opt.input is not None:
@@ -164,13 +172,22 @@ class GUI:
                 self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
     def train_step(self):
+
+        # CUSTOME
+        def write_image_to_drive(input_tensor, index):
+                # transform torch tensor to rgb image and write to drive for DEBUG purposes
+                transform = T.ToPILImage()
+                img = transform(input_tensor[0])
+                #img = img.save("debug/train_step_debug" + str(index) +".jpg")
+                img = img.save("debug/train_step_debug.jpg")
+
         starter = torch.cuda.Event(enable_timing=True)
         ender = torch.cuda.Event(enable_timing=True)
         starter.record()
 
 
         for _ in range(self.train_steps):
-
+            self.debug_step += 1
             self.step += 1
             step_ratio = min(1, self.step / self.opt.iters_refine)
 
@@ -215,7 +232,10 @@ class GUI:
 
                 image = out["image"] # [H, W, 3] in [0, 1]
                 image = image.permute(2,0,1).contiguous().unsqueeze(0) # [1, 3, H, W] in [0, 1]
-
+                #CUSTOM
+                if self.debug_step > 20:
+                    write_image_to_drive(image, self.step)
+                    self.debug_step = 0
                 images.append(image)
 
                 # enable mvdream training

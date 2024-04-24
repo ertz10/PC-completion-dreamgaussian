@@ -321,4 +321,6 @@ if __name__ == "__main__":
 
         # visualize image
         plt.imshow(grid)
+        #CUSTOM
+        plt.savefig("grid.png")
         plt.show()

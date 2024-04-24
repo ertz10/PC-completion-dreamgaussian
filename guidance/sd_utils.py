@@ -10,6 +10,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import torchvision
+import torchvision.transforms as T 
+from PIL import Image
+
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -80,6 +84,8 @@ class StableDiffusion(nn.Module):
         self.alphas = self.scheduler.alphas_cumprod.to(self.device)  # for convenience
 
         self.embeddings = {}
+
+        self.debug_step = 0
 
     @torch.no_grad()
     def get_text_embeds(self, prompts, negative_prompts):
@@ -203,6 +209,26 @@ class StableDiffusion(nn.Module):
 
         target = (latents - grad).detach()
         loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+
+        # CUSTOM
+        def write_image_to_drive(input_tensor, index=None):
+                # transform torch tensor to rgb image and write to drive for DEBUG purposes
+                transform = T.ToPILImage()
+                img = transform(input_tensor)
+                #img = img.save("debug/train_step_debug" + str(index) +".jpg")
+                img = img.save("debug/sd_model_debug" + str(index) + ".jpg")
+
+        #TODO CUSTOM
+        #imgs = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))  # [4, 3, 256, 256] 
+        imgs = self.decode_latents(latents_noisy - noise_pred)
+        # and instead of noise parameter, feed in noise_pred and see if the same image is put out as the input image
+        #CUSTOM
+        self.debug_step += 1
+        if self.debug_step > 20:
+            #for i in range(0,4):
+                #write_image_to_drive(imgs[i], i)
+            write_image_to_drive(imgs[0], 0)
+            self.debug_step = 0
 
         return loss
 

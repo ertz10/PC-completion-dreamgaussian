@@ -18,3 +18,12 @@ logs*
 videos*
 images*
 *.mp4
+
+*env*
+*.run
+data/
+diff-gaussian-rasterization/
+debug/
+pcd_debug.ply
+*.pcd
+*.jpg

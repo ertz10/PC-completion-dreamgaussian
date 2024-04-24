@@ -7,6 +7,12 @@ from mvdream.camera_utils import get_camera, convert_opengl_to_blender, normaliz
 from mvdream.model_zoo import build_model
 from mvdream.ldm.models.diffusion.ddim import DDIMSampler
 
+import torchvision
+import torchvision.transforms as T 
+from PIL import Image
+
+import matplotlib.pyplot as plt
+
 from diffusers import DDIMScheduler
 
 class MVDream(nn.Module):
@@ -15,7 +21,8 @@ class MVDream(nn.Module):
         device,
         model_name='sd-v2.1-base-4view',
         ckpt_path=None,
-        t_range=[0.02, 0.98],
+        t_range=[0.001, 0.98],
+        #t_range=[0.02, 0.98],
     ):
         super().__init__()
 
@@ -29,10 +36,16 @@ class MVDream(nn.Module):
             p.requires_grad_(False)
 
         self.dtype = torch.float32
+        self.debug_step = 0
+        self.train_steps = 0
 
+        # CUSTOM
+        #self.num_train_timesteps = 1000
+        #TODO
         self.num_train_timesteps = 1000
         self.min_step = int(self.num_train_timesteps * t_range[0])
         self.max_step = int(self.num_train_timesteps * t_range[1])
+        self.all_steps = []
 
         self.embeddings = {}
 
@@ -63,6 +76,9 @@ class MVDream(nn.Module):
         latents = self.encode_imgs(pred_rgb_256.to(self.dtype))
         # latents = torch.randn((1, 4, 64, 64), device=self.device, dtype=self.dtype)
 
+        # CUSTOM
+        #self.scheduler.set_timesteps(steps)
+        #steps *= 5
         self.scheduler.set_timesteps(steps)
         init_step = int(steps * strength)
         latents = self.scheduler.add_noise(latents, torch.randn_like(latents), self.scheduler.timesteps[init_step])
@@ -89,6 +105,8 @@ class MVDream(nn.Module):
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
         imgs = self.decode_latents(latents) # [1, 3, 512, 512]
+        #CUSTOM
+        #write_image_to_drive(imgs)
         return imgs
 
     def train_step(
@@ -96,9 +114,25 @@ class MVDream(nn.Module):
         pred_rgb, # [B, C, H, W], B is multiples of 4
         camera, # [B, 4, 4]
         step_ratio=None,
-        guidance_scale=100,
+        guidance_scale=32, #CUSTOM 100 is very high, not really room for any diversity though, sticking hard to the text prompt
         as_latent=False,
     ):
+        
+        #CUSTOM
+        #self.base_ratio = 1.0 / 500.0 # 1 / overall iterations
+        self.train_steps += 1
+        self.num_train_timesteps = 800
+        #if self.train_steps < 150:
+        #    step_ratio *= 0.5
+        #if self.train_steps >= 150 and self.train_steps < 300:
+            #guidance_scale /= 2
+            #step_ratio *= 1.2
+        if self.train_steps >= 150 and self.train_steps <= 600:
+            guidance_scale /= 2.0
+        #if self.train_steps >= 450:
+        #    guidance_scale = 2
+        #self.all_steps = np.append(self.all_steps, step_ratio) # collect all steps for graph plot
+
         
         batch_size = pred_rgb.shape[0]
         real_batch_size = batch_size // 4
@@ -112,9 +146,11 @@ class MVDream(nn.Module):
             # encode image into latents with vae, requires grad!
             latents = self.encode_imgs(pred_rgb_256)
 
+        t = 0
         if step_ratio is not None:
             # dreamtime-like
             # t = self.max_step - (self.max_step - self.min_step) * np.sqrt(step_ratio)
+            #TODO adjust t
             t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
             t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
         else:
@@ -164,6 +200,8 @@ class MVDream(nn.Module):
         with torch.no_grad():
             # add noise
             noise = torch.randn_like(latents)
+            #CUSTOM
+            #t = (t/10).to(torch.int64)
             latents_noisy = self.model.q_sample(latents, t, noise)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
@@ -186,6 +224,40 @@ class MVDream(nn.Module):
 
         target = (latents - grad).detach()
         loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+
+
+        # CUSTOM
+        def write_images_to_drive(input_tensor, index):
+
+                import PIL.Image
+
+                img_width = input_tensor.shape[2]
+                img_height = input_tensor.shape[3]
+                # create figure
+                figure = PIL.Image.new('RGB', (img_width * 4, img_height), color=(255, 255, 255))
+
+                # add images
+                for i, img in enumerate(input_tensor):
+                    transform = T.ToPILImage()
+                    image = transform(img)
+                    figure.paste(image, (i * img_width, 0))
+
+                figure.save("debug/diff_model_debug.jpg")
+
+        #TODO CUSTOM
+        #imgs = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise))  # [4, 3, 256, 256] 
+        imgs = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))  # [4, 3, 256, 256] 
+        #imgs = self.decode_latents(latents) # TODO first check why latents gives a black white image, then uncomment the line above
+        # and instead of noise parameter, feed in noise_pred and see if the same image is put out as the input image
+        #CUSTOM
+        self.debug_step += 1
+        if self.debug_step % 5 == 0:
+                write_images_to_drive(imgs, 0)
+                print("guidance scale: ", guidance_scale)
+                print("t: ", t)
+                print("num timesteps ", self.num_train_timesteps)
+                self.debug_step = 0
+        
 
         return loss
 

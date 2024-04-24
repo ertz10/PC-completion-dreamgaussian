@@ -12,6 +12,8 @@ elevation: 0
 ref_size: 256
 # density thresh for mesh extraction
 density_thresh: 1
+# CUSTOM CODE: Additional (partial) point cloud input
+point_cloud:
 
 ### Output
 outdir: logs

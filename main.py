@@ -8,13 +8,23 @@ import dearpygui.dearpygui as dpg
 import torch
 import torch.nn.functional as F
 
+import torchvision
+import torchvision.transforms as T 
+from PIL import Image
+
 import rembg
 
 from cam_utils import orbit_camera, OrbitCamera
-from gs_renderer import Renderer, MiniCam
+from gs_renderer import Renderer, MiniCam, BasicPointCloud, SH2RGB
 
 from grid_put import mipmap_linear_grid_put_2d
 from mesh import Mesh, safe_normalize
+
+import matplotlib.pyplot as plt
+
+import open3d as o3d
+
+from customLoss import AABBLoss
 
 class GUI:
     def __init__(self, opt):
@@ -61,10 +71,82 @@ class GUI:
         self.optimizer = None
         self.step = 0
         self.train_steps = 1  # steps per rendering loop
+
+        # CUSTOM
+        self.debug_step = 0
+        self.static_points_mask = None
+        self.variable_points_mask_length = 0
+        self.static_points_length = 0
+        self.all_steps = []
+
+        self.customLoss = AABBLoss()
         
         # load input data from cmdline
         if self.opt.input is not None:
             self.load_input(self.opt.input)
+
+        # CUSTOM POINT_CLOUD LOADING
+        # Use fixed positions for the input point cloud, downsample as well, everything missing
+        # to 5000 points, fill with random initialized coordinates
+        if self.opt.point_cloud is not None:
+            ply = o3d.io.read_point_cloud(self.opt.point_cloud)
+            pcd = o3d.io.write_point_cloud("pointcloud_test.pcd", ply)
+            print(pcd)
+            pcd_read = o3d.io.read_point_cloud("pointcloud_test.pcd")
+            downpcd = pcd_read.voxel_down_sample(voxel_size = 0.05)
+            downpcd = pcd_read
+
+            num_pts = len(downpcd.points) # TODO hardcoded at the moment, not good
+            radius = 0.5
+            # init from random point cloud
+            phis = np.random.random((num_pts,)) * 2 * np.pi
+            costheta = np.random.random((num_pts,)) * 2 - 1
+            thetas = np.arccos(costheta)
+            mu = np.random.random((num_pts,))
+            radius = radius * np.cbrt(mu)
+            x = radius * np.sin(thetas) * np.cos(phis)
+            y = radius * np.sin(thetas) * np.sin(phis)
+            z = radius * np.cos(thetas)
+            xyz = np.stack((x, y, z), axis=1)
+            #xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+
+            pts = downpcd.points
+            # convert from open3d to numpy
+            pts = np.asarray(pts)
+            shs = np.random.random((num_pts, 3)) / 255.0
+            xyz_full = xyz.copy()
+            xyz = xyz[len(pts):]
+            pts_merged = np.vstack((pts, xyz))
+            #pts_merged = np.vstack((pts, pts[0:(5000-len(pts))]))
+            pts_merged = pts.copy()
+            pcd = BasicPointCloud(
+                points=pts_merged, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3))
+            )
+
+            pcd_fulluniform = BasicPointCloud(
+                points=xyz_full, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3))
+            )
+            
+            self.renderer.initialize(input=pcd)
+            #self.renderer.initialize(input=pcd_fulluniform)
+
+            # MASK for static input points, only where mask is true will be optimized
+            self.static_points_mask = pts_merged.copy()
+            self.static_points_mask[0:len(pts)] = False
+            self.static_points_mask[len(pts):] = True
+            self.static_points_mask[0:4000] = False
+            self.static_points_mask[4000:] = True
+            self.static_points_mask = self.static_points_mask[:, 0]
+            #self.original_points = pts_merged.copy()
+            #self.variable_points_mask_length = len(self.static_points_mask[self.static_points_mask == True])
+            self.static_points_length = len(self.static_points_mask[self.static_points_mask == False])
+
+            #debug pcd
+            pcd_debug = o3d.geometry.PointCloud()
+            pcd_debug.points = o3d.utility.Vector3dVector(pts_merged)
+            #pcd_debug.points = o3d.utility.Vector3dVector(xyz_full)
+            o3d.io.write_point_cloud("debug/pcd_debug.ply", pcd_debug)
+            #debug pcd end
         
         # override prompt from cmdline
         if self.opt.prompt is not None:
@@ -76,8 +158,10 @@ class GUI:
         if self.opt.load is not None:
             self.renderer.initialize(self.opt.load)            
         else:
-            # initialize gaussians to a blob
-            self.renderer.initialize(num_pts=self.opt.num_pts)
+            # CUSTOM CODE
+            if self.opt.point_cloud is None:
+                # initialize gaussians to a blob
+                self.renderer.initialize(num_pts=self.opt.num_pts)
 
         if self.gui:
             dpg.create_context()
@@ -108,6 +192,11 @@ class GUI:
         self.step = 0
 
         # setup training
+        # CUSTOM with self.static_points_mask
+        #self.renderer.gaussians.static_points_mask = self.static_points_mask # CUSTOM
+        #self.renderer.gaussians.variable_points_length = self.variable_points_mask_length
+        #self.renderer.gaussians.static_points_length = self.static_points_length
+        #self.renderer.gaussians.original_points = self.original_points
         self.renderer.gaussians.training_setup(self.opt)
         # do not do progressive sh-level
         self.renderer.gaussians.active_sh_degree = self.renderer.gaussians.max_sh_degree
@@ -179,15 +268,60 @@ class GUI:
             if self.enable_zero123:
                 self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
+    
+
     def train_step(self):
+
+        # CUSTOME
+        def write_image_to_drive(input_tensor, index):
+                # transform torch tensor to rgb image and write to drive for DEBUG purposes
+                transform = T.ToPILImage()
+                img = transform(input_tensor[0])
+                img = img.save("debug/train_step_debug" + str(index) +".jpg")
+                #img = img.save("debug/train_step_debug.jpg")
+
+        # CUSTOME
+        def write_images_to_drive(input_tensor, index):
+
+                import PIL.Image
+
+                img_width = input_tensor[0].shape[2]
+                img_height = input_tensor[0].shape[3]
+                # create figure
+                figure = PIL.Image.new('RGB', (img_width * 4, img_height), color=(255, 255, 255))
+
+                # add images
+                for i, img in enumerate(input_tensor):
+                    transform = T.ToPILImage()
+                    image = transform(img[0])
+                    figure.paste(image, (i * img_width, 0))
+
+                figure.save("debug/train_step_debug.jpg")
+
         starter = torch.cuda.Event(enable_timing=True)
         ender = torch.cuda.Event(enable_timing=True)
         starter.record()
-
+        
         for _ in range(self.train_steps):
+            # CUSTOM
+            self.debug_step += 1
 
             self.step += 1
             step_ratio = min(1, self.step / self.opt.iters)
+            ############ CUSTOM ######################################
+            ## Increase step ratio, this is used by mvdream as well ##
+            ##########################################################
+            #xp = [0,    100,  200,  300, 450, 500,  600]
+            #fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.8, 0.99]
+            xp = [0,    150,  200,  300, 450, 500,  600]
+            fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.8, 0.99]
+            #step_ratio =  np.interp(self.step, xp, fp)
+            self.all_steps = np.append(self.all_steps, step_ratio)
+            ############# plot #####################
+            plt.plot(np.arange(self.step), np.ones(len(self.all_steps)) - self.all_steps)
+            plt.show()
+            plt.savefig("debug/graph_plot.png")
+            ##########################################################
 
             # update lr
             self.renderer.gaussians.update_learning_rate(self.step)
@@ -195,6 +329,7 @@ class GUI:
             loss = 0
 
             ### known view
+            # CUSTOM Only for IMAGE INPUT
             if self.input_img_torch is not None and not self.opt.imagedream:
                 cur_cam = self.fixed_cam
                 out = self.renderer.render(cur_cam)
@@ -219,8 +354,11 @@ class GUI:
             for _ in range(self.opt.batch_size):
 
                 # render random view
+                # CUSTOM maybe use not random but fixed angles per view ?
                 ver = np.random.randint(min_ver, max_ver)
                 hor = np.random.randint(-180, 180)
+                #CUSTOM
+                hor = int((360.0 / self.opt.iters) * self.step - 180.0)
                 radius = 0
 
                 vers.append(ver)
@@ -251,13 +389,17 @@ class GUI:
 
                         image = out_i["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
                         images.append(image)
-                    
+
+                if self.debug_step % 5 == 0:
+                    write_images_to_drive(images, 0)
+                    self.debug_step = 0
+
             images = torch.cat(images, dim=0)
             poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)
 
-            # import kiui
-            # print(hor, ver)
-            # kiui.vis.plot_image(images)
+            #import kiui
+            #print(hor, ver)
+            #kiui.vis.plot_image(images)
 
             # guidance loss
             if self.enable_sd:
@@ -269,15 +411,34 @@ class GUI:
             if self.enable_zero123:
                 loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation)
             
+            # TODO add loss for points inside/outside bounding box
+            self.AABB = np.array([0.0, 0.6, -0.2, 0.45, -0.25, 0.25])
+            loss = loss + self.customLoss.AABBLoss(self.AABB, self.renderer.gaussians, removePoints=False, step=self.step)
             # optimize step
             loss.backward()
+            # CUSTOM this is where gaussian pos change happens, optimizer step
             self.optimizer.step()
             self.optimizer.zero_grad()
+            #original_xyz = self.original_points[:self.static_points_length]
+            with torch.no_grad():
+                original_xyz = self.renderer.gaussians.original_xyz #torch.tensor(original_xyz)
+                original_featuresdc = self.renderer.gaussians.original_featuresdc
+                original_features_rest = self.renderer.gaussians.original_features_rest
+                original_opacity = self.renderer.gaussians.original_opacity
+                original_scaling = self.renderer.gaussians.original_scaling
+                original_rotation = self.renderer.gaussians.original_rotation
 
             # densify and prune
             if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
-                viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"], out["radii"]
-                self.renderer.gaussians.max_radii2D[visibility_filter] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                #CUSTOM .to("cpu")
+                viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"].to("cuda"), out["radii"]
+                #CUSTOM
+                length = len(viewspace_point_tensor) - len(self.renderer.gaussians.static_points_mask[self.renderer.gaussians.static_points_mask == 0])
+
+                viewspace_point_tensor_temp = viewspace_point_tensor[0:length]
+                visibility_filter_temp = visibility_filter[0:length]
+                radii_temp = radii[0:length]
+                self.renderer.gaussians.max_radii2D[visibility_filter_temp] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter_temp], radii_temp[visibility_filter_temp])
                 self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                 if self.step % self.opt.densification_interval == 0:
@@ -285,6 +446,16 @@ class GUI:
                 
                 if self.step % self.opt.opacity_reset_interval == 0:
                     self.renderer.gaussians.reset_opacity()
+
+                ######################### CUSTOM ############################
+                ############ Test points against bounding box ###############
+                #############################################################
+                ####### [min_x, max_x, min_y, max_y, min_z, max_z] ##########
+                #if self.step % 2 == 0 and self.step < 100:
+                prune_checkpoints = np.array([1, 20])
+                if self.step in prune_checkpoints:
+                    self.renderer.gaussians.TestAgainstBB(self.AABB, removePoints=True)
+                #############################################################
 
         ender.record()
         torch.cuda.synchronize()
@@ -375,7 +546,6 @@ class GUI:
                 "_texture", self.buffer_image
             )  # buffer must be contiguous, else seg fault!
 
-    
     def load_input(self, file):
         # load image
         print(f'[INFO] load image from {file}...')
@@ -402,7 +572,7 @@ class GUI:
                 self.prompt = f.read().strip()
 
     @torch.no_grad()
-    def save_model(self, mode='geo', texture_size=1024):
+    def save_model(self, mode='geo', texture_size=1024, index=0):
         os.makedirs(self.opt.outdir, exist_ok=True)
         if mode == 'geo':
             path = os.path.join(self.opt.outdir, self.opt.save_path + '_mesh.ply')
@@ -538,6 +708,7 @@ class GUI:
             mesh.write(path)
 
         else:
+            #path = os.path.join(self.opt.outdir, self.opt.save_path + '_model' + str(index) + '.ply')
             path = os.path.join(self.opt.outdir, self.opt.save_path + '_model.ply')
             self.renderer.gaussians.save_ply(path)
 
@@ -889,8 +1060,16 @@ class GUI:
     def train(self, iters=500):
         if iters > 0:
             self.prepare_train()
+
+            # CUSTOM
+            pc_index = 0
             for i in tqdm.trange(iters):
                 self.train_step()
+                #CUSTOM
+                if(pc_index == 50):
+                    self.save_model(mode="model", index=i)
+                    pc_index = 0
+                pc_index += 1
             # do a last prune
             self.renderer.gaussians.prune(min_opacity=0.01, extent=1, max_screen_size=1)
         # save
@@ -901,6 +1080,8 @@ class GUI:
 if __name__ == "__main__":
     import argparse
     from omegaconf import OmegaConf
+    # https://pavolkutaj.medium.com/how-to-attach-debugger-to-python-script-called-from-terminal-in-visual-studio-code-ddd377d99456
+    #input("Press enter to start ... (this prompt enables attaching the Python DEBUGGER!)")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="path to the yaml config file")

@@ -13,6 +13,8 @@ ref_size: 256
 # density thresh for mesh extraction
 density_thresh: 1
 
+point_cloud: 
+
 ### Output
 outdir: logs
 mesh_format: obj

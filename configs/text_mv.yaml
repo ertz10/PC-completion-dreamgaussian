@@ -11,7 +11,9 @@ elevation: 0
 # reference image resolution
 ref_size: 256
 # density thresh for mesh extraction
-density_thresh: 1
+density_thresh: 1 # default 1
+# CUSTOM CODE: Additional (partial) point cloud input
+point_cloud:
 
 ### Output
 outdir: logs
@@ -24,22 +26,22 @@ mvdream: True
 # use imagedream
 imagedream: False
 # use stable-zero123 instead of zero123-xl
-stable_zero123: False 
+stable_zero123: True 
 # guidance loss weights (0 to disable)
 lambda_sd: 1
-lambda_zero123: 0
+lambda_zero123: 0 # default 0
 # warmup rgb supervision for image-to-3d
 warmup_rgb_loss: True
 # training batch size per iter
-batch_size: 1
+batch_size: 2 # default 1
 # training iterations for stage 1
-iters: 500
+iters: 600
 # whether to linearly anneal timestep
-anneal_timestep: True
+anneal_timestep: True #default True
 # training iterations for stage 2
 iters_refine: 50
 # training camera radius
-radius: 2.5
+radius: 2.5 #default 2.5
 # training camera fovy
 fovy: 49.1
 # training camera min elevation
@@ -62,21 +64,22 @@ W: 800
 
 ### Gaussian splatting
 num_pts: 5000
-sh_degree: 0
-position_lr_init: 0.001
-position_lr_final: 0.00002
+sh_degree: 3 #default 0
+position_lr_init: 0.001 #default 0.001
+position_lr_final: 0.00002 #default 0.00002
 position_lr_delay_mult: 0.02
-position_lr_max_steps: 300
+position_lr_max_steps: 300 #default 300
 feature_lr: 0.01
-opacity_lr: 0.05
-scaling_lr: 0.005
-rotation_lr: 0.005
+opacity_lr: 0.05 #default 0.05
+scaling_lr: 0.005 #default 0.005
+rotation_lr: 0.005 #default 0.005
 percent_dense: 0.01
 density_start_iter: 0
-density_end_iter: 3000
-densification_interval: 50
+density_end_iter: 400
+#CUSTOM default 50
+densification_interval: 50 # default 50
 opacity_reset_interval: 700
-densify_grad_threshold: 0.01
+densify_grad_threshold: 0.01 # default 0.01
 
 ### Textured Mesh
 geom_lr: 0.0001
