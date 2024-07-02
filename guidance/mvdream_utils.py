@@ -6,6 +6,9 @@ import torch.nn.functional as F
 from mvdream.camera_utils import get_camera, convert_opengl_to_blender, normalize_camera
 from mvdream.model_zoo import build_model
 from mvdream.ldm.models.diffusion.ddim import DDIMSampler
+import torchvision.transforms.functional
+
+#from guidance.diffusion_blending import DiffusionBlend
 
 import torchvision
 import torchvision.transforms as T 
@@ -14,6 +17,8 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 from diffusers import DDIMScheduler
+from diffusers import StableDiffusionPipeline
+from torch import autocast
 
 class MVDream(nn.Module):
     def __init__(
@@ -70,6 +75,24 @@ class MVDream(nn.Module):
                guidance_scale=100, steps=50, strength=0.8,
         ):
 
+        # CUSTOM
+        def write_images_to_drive(input_tensor, index=-1, string=""):
+
+                import PIL.Image
+
+                img_width = input_tensor.shape[2]
+                img_height = input_tensor.shape[3]
+                # create figure
+                figure = PIL.Image.new('RGB', (img_width * 4, img_height), color=(255, 255, 255))
+
+                # add images
+                for i, img in enumerate(input_tensor):
+                    transform = T.ToPILImage()
+                    image = transform(img)
+                    figure.paste(image, (i * img_width, 0))
+
+                figure.save("debug/mvdreams_image_debug" + str(string) + ".jpg")
+
         batch_size = pred_rgb.shape[0]
         real_batch_size = batch_size // 4
         pred_rgb_256 = F.interpolate(pred_rgb, (256, 256), mode='bilinear', align_corners=False)
@@ -106,17 +129,40 @@ class MVDream(nn.Module):
 
         imgs = self.decode_latents(latents) # [1, 3, 512, 512]
         #CUSTOM
-        #write_image_to_drive(imgs)
+        write_images_to_drive(imgs)
         return imgs
 
     def train_step(
         self,
         pred_rgb, # [B, C, H, W], B is multiples of 4
         camera, # [B, 4, 4]
+        customLoss,
         step_ratio=None,
-        guidance_scale=32, #CUSTOM 100 is very high, not really room for any diversity though, sticking hard to the text prompt
+        guidance_scale=100, #8 had good results so far, without normalization
         as_latent=False,
+        dynamic_images=None,
+        static_images=None,
+        dynamic_depth_images=None,
+        static_depth_images=None
     ):
+        
+        # CUSTOM
+        def write_images_to_drive(input_tensor, index=-1, string=""):
+
+                import PIL.Image
+
+                img_width = input_tensor.shape[2]
+                img_height = input_tensor.shape[3]
+                # create figure
+                figure = PIL.Image.new('RGB', (img_width * 4, img_height), color=(255, 255, 255))
+
+                # add images
+                for i, img in enumerate(input_tensor):
+                    transform = T.ToPILImage()
+                    image = transform(img)
+                    figure.paste(image, (i * img_width, 0))
+
+                figure.save("debug/diff_model_debug" + str(string) + ".jpg")
         
         #CUSTOM
         #self.base_ratio = 1.0 / 500.0 # 1 / overall iterations
@@ -127,8 +173,8 @@ class MVDream(nn.Module):
         #if self.train_steps >= 150 and self.train_steps < 300:
             #guidance_scale /= 2
             #step_ratio *= 1.2
-        if self.train_steps >= 150 and self.train_steps <= 600:
-            guidance_scale /= 2.0
+        #if self.train_steps >= 400 and self.train_steps <= 600:
+        #    guidance_scale /= 2.0
         #if self.train_steps >= 450:
         #    guidance_scale = 2
         #self.all_steps = np.append(self.all_steps, step_ratio) # collect all steps for graph plot
@@ -144,6 +190,24 @@ class MVDream(nn.Module):
             # interp to 256x256 to be fed into vae.
             pred_rgb_256 = F.interpolate(pred_rgb, (256, 256), mode="bilinear", align_corners=False)
             # encode image into latents with vae, requires grad!
+            ################ CUSTOM gaussian blurring ? ################
+            #gaussian_kernel_size = 1 if (142 - (self.train_steps * 2 - 1)) < 1 else (142 - (self.train_steps * 2 - 1))
+            xp = np.arange(600)
+            fp = np.arange(200)
+            for i in range(0, 200):
+                if(fp[i] % 2 == 1):
+                    fp[i] = i # is odd
+                else:
+                    fp[i] = i - 1 # when even
+            fp[0] = 1
+            # truncate
+            step = np.floor(200/64).astype(int)
+            fp = fp[0:64]
+            # repeat each element by step
+            fp = np.repeat(fp, step)
+            gaussian_kernel_size = 64 - fp[self.train_steps] if self.train_steps < 190 else 1
+            pred_rgb_256 = torchvision.transforms.functional.gaussian_blur(pred_rgb_256, int(gaussian_kernel_size))
+            ############################################################
             latents = self.encode_imgs(pred_rgb_256)
 
         t = 0
@@ -202,6 +266,11 @@ class MVDream(nn.Module):
             noise = torch.randn_like(latents)
             #CUSTOM
             #t = (t/10).to(torch.int64)
+            # GOOD resource https://colab.research.google.com/drive/1dlgggNa5Mz8sEAGU0wFCHhGLFooW_pf1#scrollTo=pj33ZTHKUYIx
+            # https://www.reddit.com/r/StableDiffusion/comments/xalo78/fixing_excessive_contrastsaturation_resulting/ #
+            #################### TODO try some normalization to tackle high SD contrast ? #####################
+            #latents = latents / (latents.max() / 2.0)
+            ###################################################################################################
             latents_noisy = self.model.q_sample(latents, t, noise)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
@@ -222,37 +291,72 @@ class MVDream(nn.Module):
         # seems important to avoid NaN...
         # grad = grad.clamp(-1, 1)
 
-        target = (latents - grad).detach()
-        loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
-
-
         # CUSTOM
-        def write_images_to_drive(input_tensor, index):
+        # blend diffusion output with input image (or masking)
+        #diffusion_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))
+        #blended_imgs = DiffusionBlend.BlendDiffusionOutput(diffusion_output=diffusion_output, rendered_imgs=pred_rgb)
+        #latents = self.encode_imgs(blended_imgs)
+        # TODO clamp input masks to [0, 1] and subtract from latents, encode the mask first as well!
+        # TODO for the static part, take the existing part and lay it over latents, so the loss is 0 there, because the colors are 
+        # the same, TODO depth sorting!
 
-                import PIL.Image
+        #imgs_blended = customLoss.blend_images(dynamic_images, static_images, dynamic_depth_images, static_depth_images)
+        dynamic_depth, static_depth = customLoss.blend_images(dynamic_images, static_images, dynamic_depth_images, static_depth_images)
 
-                img_width = input_tensor.shape[2]
-                img_height = input_tensor.shape[3]
-                # create figure
-                figure = PIL.Image.new('RGB', (img_width * 4, img_height), color=(255, 255, 255))
+        #write_images_to_drive(torch.stack((dynamic_images))[:, 3:], string="_depth_compare")
 
-                # add images
-                for i, img in enumerate(input_tensor):
-                    transform = T.ToPILImage()
-                    image = transform(img)
-                    figure.paste(image, (i * img_width, 0))
+        # TODO blend grad and static regions of rendering, so grad results in zero in those regions
+        static_depth = torch.stack((static_depth))
+        i0 = torch.vstack((static_depth[0], static_depth[0], static_depth[0], static_depth[0])).unsqueeze(0)
+        i1 = torch.vstack((static_depth[1], static_depth[1], static_depth[1], static_depth[1])).unsqueeze(0)
+        i2 = torch.vstack((static_depth[2], static_depth[2], static_depth[2], static_depth[2])).unsqueeze(0)
+        i3 = torch.vstack((static_depth[3], static_depth[3], static_depth[3], static_depth[3])).unsqueeze(0)
+        static_depth = torch.vstack((i0, i1, i2, i3))
+        dynamic_depth = torch.stack((dynamic_depth))
+        i0 = torch.vstack((dynamic_depth[0], dynamic_depth[0], dynamic_depth[0], dynamic_depth[0])).unsqueeze(0)
+        i1 = torch.vstack((dynamic_depth[1], dynamic_depth[1], dynamic_depth[1], dynamic_depth[1])).unsqueeze(0)
+        i2 = torch.vstack((dynamic_depth[2], dynamic_depth[2], dynamic_depth[2], dynamic_depth[2])).unsqueeze(0)
+        i3 = torch.vstack((dynamic_depth[3], dynamic_depth[3], dynamic_depth[3], dynamic_depth[3])).unsqueeze(0)
+        dynamic_depth = torch.vstack((i0, i1, i2, i3))
+        inverted_static_depth = static_depth.clone().detach()
+        inverted_static_depth[static_depth == 0] = 1.0
+        inverted_static_depth[static_depth == 1] = 0.0
+        #static_images = torch.stack((static_images)) * (inverted_static_depth*1.0) # multiply with binary mask
+        #test = torch.stack((static_depth))*1.0
+        #write_images_to_drive(static_images, string="_static_masked")
+        #static_blended = self.encode_imgs(F.interpolate(static_images[:, :3], (256, 256), mode="bilinear", align_corners=False))#self.encode_imgs(torch.stack((static_images))) # list to tensor
+        
+        #grad = torch.clamp((grad + static_blended), 0.0, 1.0)
 
-                figure.save("debug/diff_model_debug.jpg")
+        target = (latents - grad).detach()
+        # TODO blend target with static image regions
+        static_images = torch.stack((static_images))
+        alphas = torch.stack((dynamic_images))[:, 3:]
+        inverted_static_depth_interp = F.interpolate((inverted_static_depth * 1.0), (256, 256), mode="bilinear", align_corners=False)[:, :3]
+        static_images_interp = F.interpolate((static_images * static_depth), (256, 256), mode="bilinear", align_corners=False)[:, :3]
+        #target = target * self.encode_imgs(inverted_static_depth_interp) + self.encode_imgs(static_images_interp)
+        ################ CUSTOM gaussian blurring ? ################
+        #blurred_static_images_interp = torchvision.transforms.functional.gaussian_blur(static_images_interp, 81)
+        ############################################################
+        target = (self.decode_latents(target) * inverted_static_depth_interp) + (static_images_interp.detach() * 1.0) # use detach for static_images_interp, otherwise it will throw gradient error
+        #target = self.decode_latents(target)
+        #target = torchvision.transforms.functional.gaussian_blur(target, int(gaussian_kernel_size))
+        write_images_to_drive(target, string="_mvdream_target_masked")
+        target = self.encode_imgs(target)
+        loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
 
         #TODO CUSTOM
         #imgs = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise))  # [4, 3, 256, 256] 
         imgs = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))  # [4, 3, 256, 256] 
-        #imgs = self.decode_latents(latents) # TODO first check why latents gives a black white image, then uncomment the line above
+        imgs_target = self.decode_latents(target)
+        imgs_latents = self.decode_latents(latents)
         # and instead of noise parameter, feed in noise_pred and see if the same image is put out as the input image
         #CUSTOM
         self.debug_step += 1
-        if self.debug_step % 5 == 0:
+        if self.debug_step % 1 == 0:
                 write_images_to_drive(imgs, 0)
+                write_images_to_drive(imgs_target, string="_target")
+                write_images_to_drive(imgs_latents, string="_latents")
                 print("guidance scale: ", guidance_scale)
                 print("t: ", t)
                 print("num timesteps ", self.num_train_timesteps)

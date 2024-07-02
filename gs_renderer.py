@@ -22,6 +22,7 @@ import kiui
 import open3d as o3d
 
 from scipy.spatial.transform import Rotation as R
+from gaussianSplatsTransform import GaussianTransform
 
 import torchvision
 import torchvision.transforms as T 
@@ -178,6 +179,7 @@ class GaussianModel:
         self.original_opacity = None
         self.original_scaling = None
         self.original_rotation = None
+        self.customGSTransform = GaussianTransform()
 
     def capture(self):
         return (
@@ -239,8 +241,10 @@ class GaussianModel:
         #features_dc = self._features_dc
         #features_rest = self._features_rest
         static_points_mask = self.static_points_mask
-        features_dc = torch.vstack((self._features_dc, self.original_featuresdc[static_points_mask == 0]))
-        features_rest = torch.vstack((self._features_rest, self.original_features_rest[static_points_mask == 0]))
+        #features_dc = torch.vstack((self._features_dc, self.original_featuresdc[static_points_mask == 0]))
+        features_dc = torch.vstack((self._features_dc, self.original_featuresdc))
+        #features_rest = torch.vstack((self._features_rest, self.original_features_rest[static_points_mask == 0]))
+        features_rest = torch.vstack((self._features_rest, self.original_features_rest))
         return torch.cat((features_dc, features_rest), dim=1)
     
     @property
@@ -391,19 +395,8 @@ class GaussianModel:
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        #self.xyz_gradient_accum = torch.zeros((len(self.static_points_mask), 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        #self.denom = torch.zeros((len(self.static_points_mask), 1), device="cuda")
 
-        # CUSTOM this is where gaussian xyzs (centers) are given to the optimizer ?
-        #self._xyz = torch.tensor(self._xyz[self.variable_points_length:], requires_grad=True)
-        #self._features_dc = torch.tensor(self._features_dc[self.variable_points_length:], requires_grad=True)
-        #self._features_rest = torch.tensor(self._features_rest[self.variable_points_length:], requires_grad=True)
-        #self._opacity = torch.tensor(self._opacity[self.variable_points_length:], requires_grad=True)
-        #self._scaling = torch.tensor(self._scaling[self.variable_points_length:], requires_grad=True)
-        #self._rotation = torch.tensor(self._rotation[self.variable_points_length:], requires_grad=True)
-        #CUSTOM end
-        #xyz_custom = torch.tensor(self._xyz[self.static_points_length:], requires_grad=True)
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
@@ -535,7 +528,7 @@ class GaussianModel:
         else:
             return bools_final
     
-    def load_ply(self, path):
+    def load_ply(self, path, AABB):
         import trimesh
         #@ERLER
         def transform_points_around_pivot(pts: np.ndarray, trans_matrix: np.ndarray, pivot: np.ndarray):
@@ -556,6 +549,9 @@ class GaussianModel:
             return pts
         
         #CUSTOM
+        
+
+        #CUSTOM
         def calculateCenterOfMass(xyz: np.ndarray):
             return xyz.mean(axis=0)
 
@@ -566,21 +562,34 @@ class GaussianModel:
             count = 0
             mask = np.zeros(len(xyz))
             indices = np.array([])
-            for i in range(0, len(xyz)-1):
+            #for i in range(0, len(xyz)-1):
+            counter = 0
+            for i in xyz:
                 #print("X:", xyz[i, 0], ", Y:", xyz[i, 1], ", Z:", xyz[i, 2])
-                if xyz[i, 0] > 0.0:
-                    noise = (np.random.rand(3) - 0.5) * 0.5
-                    xyz[i] += noise
-                    scales[i] = np.array((-3, -3, -3))
-                    rots[i] = np.array((1, 0, 0, 0))
-                    opacities[i] = inverse_sigmoid(torch.tensor((0.1))).item()
+                #if xyz[i, 0] > 0.0:
+                if i[0] > 0.0:
+                    #noise = (np.random.rand(3) - 0.5) * 0.5
+                    #xyz[i] += noise
+                    #scales[i] = np.array((-3, -3, -3))
+                    #rots[i] = np.array((1, 0, 0, 0))
+                    #opacities[i] = inverse_sigmoid(torch.tensor((0.1))).item()
                     #count += 1
-                    mask[i] = 1
-                    indices = np.append(indices, i) 
+                    #mask[i] = 1
+                    xyz = np.delete(xyz, counter, axis=0)
+                    scales = np.delete(scales, counter, axis=0)
+                    rots = np.delete(rots, counter, axis=0)
+                    opacities = np.delete(opacities, counter, axis=0)
+                    features_dc = np.delete(features_dc, counter, axis=0)
+                    features_extra = np.delete(features_extra, counter, axis=0)
+                    counter -= 1
+                    count += 1
+                    indices = np.append(indices, counter) 
+                counter += 1
                     
             #SUBSAMPLE NOISY PART
             indices = indices.astype(int)
-            subsample_count = 5000
+            subsample_count = 2000
+            '''
             indices = np.random.choice(indices, size=subsample_count)
             subsamples_xyz = xyz[indices]
             subsamples_scales = scales[indices]
@@ -596,9 +605,11 @@ class GaussianModel:
             mask_subsampled = np.hstack((subsamples_mask, mask[mask == 0]))
             features_dc = np.vstack((subsamples_features_dc, features_dc[mask == 0]))
             features_extra = np.vstack((subsamples_features_extra, features_extra[mask == 0]))
+            '''
             #count = 5000
 
-            return xyz, scales, rots, opacities, subsample_count, features_dc, features_extra, mask, mask_subsampled
+            #return xyz, scales, rots, opacities, subsample_count, features_dc, features_extra, mask, mask_subsampled
+            return xyz, scales, rots, opacities, features_dc, features_extra
     
         plydata = PlyData.read(path)
 
@@ -639,38 +650,122 @@ class GaussianModel:
         # first center point cloud
         translated_pts = xyz - centroid
         #rotation = trimesh.transformations.euler_matrix(0, 0, 180, 'sxyz')#trimesh.transformations.rotation_matrix(-110.5, [1, 0, 0], [0, 0, 0])
+        #######################################################################################################
+        ########### COUCH #####################################################################################
+        #######################################################################################################
+        '''
         rotation = trimesh.transformations.rotation_matrix(3.14159, [0, 0, 1], [0, 0, 0]) # angle is in radians
         rotated_pts = transform_points_around_pivot(pts=translated_pts, trans_matrix=rotation, pivot=[0,0,0])
         rotation = trimesh.transformations.rotation_matrix(0.2618, [1, 0, 0], [0, 0, 0]) # angle is in radians
         rotated_pts = transform_points_around_pivot(pts=rotated_pts, trans_matrix=rotation, pivot=[0,0,0])
-        #scale = trimesh.transformations.scale_matrix(1, [0, 0, 0])
-        #scaled_pts = transform_points_around_pivot(pts=rotated_pts, trans_matrix=scale, pivot=None)
-        #translated_pts = scaled_pts + np.array((0.25, 2, 0))
         xyz = rotated_pts + np.array([0, 0.2, 0])
-        #CUSTOM
-        
-        xyz, scales, rots, opacities, count, features_dc, features_extra, mask, mask_subsampled = createHalfNoise(xyz, scales, rots, opacities, 
+
+        xyz, scales, rots, opacities, features_dc, features_extra = createHalfNoise(xyz, scales, rots, opacities, 
                                                                                                                   features_dc, #dc
                                                                                                                   features_extra) #extra
+        individual_scales = [-1, -1, -1]
+        '''
+        #######################################################################################################
+        ########### COUCH #####################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Trash can #################################################################################
+        #######################################################################################################
+        '''
+        scale = trimesh.transformations.scale_matrix(1.0, [0, 0, 0])
+        #scaled_pts = transform_points_around_pivot(pts=translated_pts, trans_matrix=scale, pivot=[0, 0, 0])
+        # TODO instead of scaling, normalize point cloud
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts) # TODO also normalize scale!! maybe don't normalize ???
+        rotation = trimesh.transformations.rotation_matrix(3.14159, [1, 0, 0], [0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=scale, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        xyz = xyz + np.array([0, 0.3, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        scales = (scales) - np.log(norm_factor)#np.repeat([[-1, -1, -1]], len(scales), axis=0)
+        individual_scales = [-1, -1, -1]
+        '''
+        #######################################################################################################
+        ########### Trash can #################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Elephant ##################################################################################
+        #######################################################################################################
+        '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        rotation = trimesh.transformations.rotation_matrix(2.79253, [1, 0, 0], [0, 0, 0])
+        #rotation2 = trimesh.transformations.rotation_matrix(3.14159, [0, 1, 0], [0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        #xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        #rots = self.customGSTransform.rotate(rots, rotation2)
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-3, -3, -3]
+        '''
+        #######################################################################################################
+        ########### Elephant ##################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Hocker ##################################################################################
+        #######################################################################################################
+        #'''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        rotation = trimesh.transformations.rotation_matrix(1.5708, [1, 0, 0], [0, 0, 0]) #90 deg
+        rotation2 = trimesh.transformations.rotation_matrix(-0.640865, [0, 0, 1], [0, 0, 0]) #35 deg
+        rotation3 = trimesh.transformations.rotation_matrix(-0.698132, [0, 1, 0], [0, 0, 0]) #40 deg
+        rotation4 = trimesh.transformations.rotation_matrix(3.14159265, [0, 1, 0], [0, 0, 0]) #180 deg
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation4, pivot=[0, 0, 0])
+        #centroid = calculateCenterOfMass(xyz)
+        xyz = xyz + np.array([0.1, 0, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        rots = self.customGSTransform.rotate(rots, rotation2)
+        rots = self.customGSTransform.rotate(rots, rotation3)
+        rots = self.customGSTransform.rotate(rots, rotation4)
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-2, -2, -2]
+        #'''
+        #######################################################################################################
+        ########### Hocker end ################################################################################
+        #######################################################################################################
 
         #############################################
         # Init half of object to gaussian blob ######
         #############################################
-        num_pts = count # TODO hardcoded at the moment, not good
+        # TODO initialize inside bounding box!
+        
+        num_pts = 100 # TODO hardcoded at the moment, not good
         radius = 0.5
         # init from random point cloud
-        phis = np.random.random((num_pts,)) * 2 * np.pi
-        costheta = np.random.random((num_pts,)) * 2 - 1
-        thetas = np.arccos(costheta)
-        mu = np.random.random((num_pts,))
-        radius = radius * np.cbrt(mu)
-        x = radius * np.sin(thetas) * np.cos(phis)
-        y = radius * np.sin(thetas) * np.sin(phis)
-        z = radius * np.cos(thetas)
+        #phis = np.random.random((num_pts,)) * 2 * np.pi
+        #costheta = np.random.random((num_pts,)) * 2 - 1
+        #thetas = np.arccos(costheta)
+        #mu = np.random.random((num_pts,))
+        #radius = radius * np.cbrt(mu)
+        #x = radius * np.sin(thetas) * np.cos(phis)
+        #y = radius * np.sin(thetas) * np.sin(phis)
+        #z = radius * np.cos(thetas)
+        # TODO instead of sphere, do cube sampling
+        x = np.random.uniform(low=AABB[0], high=AABB[1], size=num_pts)
+        y = np.random.uniform(low=AABB[2], high=AABB[3], size=num_pts)
+        z = np.random.uniform(low=AABB[4], high=AABB[5], size=num_pts)
         xyz_2 = np.stack((x, y, z), axis=1)
 
-        xyz[mask_subsampled.astype(int) == 1] = xyz_2
-        #opacities = inverse_sigmoid(0.1 * torch.ones((xyz.shape[0], 1), dtype=torch.float, device="cuda")) * 0.2
+        #xyz[mask_subsampled.astype(int) == 1] = xyz_2
+        xyz = np.vstack((xyz_2, xyz))
+        temp_opacities = inverse_sigmoid(0.1 * torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy() * 0.2
+        opacities = np.vstack((temp_opacities, opacities))
+        temp_scales = np.repeat([individual_scales], len(xyz_2), axis = 0)
+        scales = np.vstack((temp_scales, scales))
+        temp_rots = np.repeat([[1, 0, 0, 0]], len(xyz_2), axis = 0)
+        rots = np.vstack((temp_rots, rots))
+
+        mask_subsampled = np.zeros(len(xyz))
+        mask_subsampled[0:len(xyz_2)] = 1
 
         #############################################
         # End init half of object to gaussian blob ##
@@ -679,23 +774,21 @@ class GaussianModel:
         fused_point_cloud = torch.tensor(np.asarray(xyz)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(xyz)).float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
-        features[:, :3, 0 ] = torch.tensor([0.2, 0.2, 0.2], dtype=torch.float, device="cuda")
+        features[:, :3, 0 ] = torch.tensor([0.1, 0.1, 0.1], dtype=torch.float, device="cuda")
         features[:, 3:, 1:] = 0.0
 
         pcd_debug = o3d.geometry.PointCloud()
         pcd_debug.points = o3d.utility.Vector3dVector(xyz)
         #pcd_debug.points = o3d.utility.Vector3dVector(xyz_full)
         o3d.io.write_point_cloud("debug/pcd_debug_transformed.ply", pcd_debug)
-        o3d.io.write_point_cloud("data/couch_halfnoise.ply", pcd_debug)
 
-        #features_dc_masked = features_dc[mask == 0]
-        #features_masked = features[mask == 1, :, 0:1]
-        #features_dc = np.vstack((features_dc[mask == 0], features[mask==1,:,0:1].cpu().numpy()))
-        #features_extra = np.vstack((features_extra[mask == 0], features[mask==1, :, 1:].cpu().numpy()))
-        #features_dc = np.vstack((features_dc[mask == 1], features_dc[mask == 0]))
-        #features_extra = np.vstack((features_extra[mask == 1], features_extra[mask == 0]))
-        features_dc[mask_subsampled == 1] = features[mask_subsampled == 1, :, 0:1].cpu().numpy()
-        features_extra[mask_subsampled == 1] = features[mask_subsampled == 1, :, 1:].cpu().numpy()
+        #features_dc[mask_subsampled == 1] = features[mask_subsampled == 1, :, 0:1].cpu().numpy()
+        #features_extra[mask_subsampled == 1] = features[mask_subsampled == 1, :, 1:].cpu().numpy()
+        features_dc = np.vstack((features[0:len(xyz_2), :, 0:1].cpu().numpy(), features_dc))
+        features_extra = features[:,:,1:]#np.vstack((features[0:len(xyz_2), :, 1:].cpu().numpy(), features_extra)) # TODO omit SH coefficients
+        # TODO TEST #
+        #features_dc = features[:, :, 0:1]
+        #features_extra = features[:, :, 1:]
         self._xyz = nn.Parameter(torch.tensor(xyz[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
         self._features_dc = nn.Parameter(torch.tensor(features_dc[mask_subsampled == 1], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         # TODO try to scrap features_rest
@@ -704,13 +797,6 @@ class GaussianModel:
         self._scaling = nn.Parameter(torch.tensor(scales[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
 
-        #self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
-        #self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
-        #self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
-        #self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
-        #self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
-        #self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
-
         self.active_sh_degree = self.max_sh_degree
         self.spatial_lr_scale = 10
         self.static_points_mask = mask_subsampled.copy()
@@ -718,22 +804,12 @@ class GaussianModel:
         self.max_radii2D = torch.zeros((len(self.static_points_mask[self.static_points_mask == 1])), device="cuda")
         #self.max_radii2D = torch.zeros((len(self.static_points_mask)), device="cuda")
 
-        #self.original_xyz = self._xyz.clone().detach()
-        #self.original_featuresdc = self._features_dc.clone().detach()
-        #self.original_features_rest = self._features_rest.clone().detach()
-        #self.original_opacity = self._opacity.clone().detach()
-        #self.original_scaling = self._scaling.clone().detach()
-        #self.original_rotation = self._rotation.clone().detach()
-
-        self.original_xyz = torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(False)
-        self.original_featuresdc = torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
-        self.original_features_rest = torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
-        self.original_opacity = torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(False)
-        self.original_scaling = torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(False)
-        self.original_rotation = torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(False)
-
-        #self._features_dc = nn.Parameter(features[:,:,0:1].transpose(1, 2).contiguous().requires_grad_(True))
-        #self._features_rest = nn.Parameter(features[:,:,1:].transpose(1, 2).contiguous().requires_grad_(True))
+        self.original_xyz = torch.tensor(xyz[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self.original_featuresdc = torch.tensor(features_dc[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
+        self.original_features_rest = torch.tensor(features_extra[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
+        self.original_opacity = torch.tensor(opacities[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self.original_scaling = torch.tensor(scales[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self.original_rotation = torch.tensor(rots[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
 
         
 
@@ -859,13 +935,6 @@ class GaussianModel:
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
-        #new_rotation = rotation[selected_pts_mask].repeat(N,1)
-        #features_dc = torch.vstack((self._features_dc, self.original_featuresdc[spm == 0]))
-        #features_rest = torch.vstack((self._features_rest, self.original_features_rest[spm == 0]))
-        #opacity = torch.vstack((self._opacity, self.original_opacity[spm == 0]))
-        #new_features_dc = features_dc[selected_pts_mask].repeat(N,1,1)
-        #new_features_rest = features_rest[selected_pts_mask].repeat(N,1,1)
-        #new_opacity = opacity[selected_pts_mask].repeat(N,1,1)
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
 
@@ -881,25 +950,12 @@ class GaussianModel:
 
         #CUSTOM
         selected_pts_mask = selected_pts_mask[0:self._xyz.shape[0]]
-        #spm = self.static_points_mask
-        #_xyz = torch.vstack((self._xyz, self.original_xyz[spm == 0]))
-        #_features_dc = torch.vstack((self._features_dc, self.original_featuresdc[spm == 0]))
-        #_features_rest = torch.vstack((self._features_rest, self.original_features_rest[spm == 0]))
-        #_opacities = torch.vstack((self._opacity, self.original_opacity[spm == 0]))
-        #_scaling = torch.vstack((self._scaling, self.original_scaling[spm == 0]))
-        #_rotation = torch.vstack((self._rotation, self.original_rotation[spm == 0]))
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
-        #new_xyz = _xyz[selected_pts_mask]
-        #new_features_dc = _features_dc[selected_pts_mask]
-        #new_features_rest = _features_rest[selected_pts_mask]
-        #new_opacities = _opacities[selected_pts_mask]
-        #new_scaling = _scaling[selected_pts_mask]
-        #new_rotation = _rotation[selected_pts_mask]
 
         self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
 
@@ -926,24 +982,16 @@ class GaussianModel:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
-        #self.prune_points(prune_mask)
+        self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()
 
 
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         #CUSTOM
-        length = len(viewspace_point_tensor.grad) - len(self.static_points_mask[self.static_points_mask == 0])
+        length = len(viewspace_point_tensor.grad) - len(self.original_xyz)#len(self.static_points_mask[self.static_points_mask == 0])
         gradients = viewspace_point_tensor.grad
         gradients = gradients[0:length]
-        #viewspace_point_tensor = viewspace_point_tensor[0:length]
-        #viewspace_point_tensor.grad = viewspace_point_tensor.grad[0:length]
-        #self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
-
-        # In this case, append original_xyz because we don't touch them anyways, so we can mix grad accum and xyz
-        #xyz_gradient_accum = np.vstack((self.xyz_gradient_accum, self.original_xyz[self.static_points_mask == 0]))
-        #self.xyz_gradient_accum[update_filter] += torch.norm(gradients[update_filter,:2], dim=-1, keepdim=True)
-        # Maybe just prune update_filter ?
         update_filter = update_filter[0:length]
         self.xyz_gradient_accum[update_filter] += torch.norm(gradients[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
@@ -1009,7 +1057,7 @@ class Renderer:
             device="cuda",
         )
     
-    def initialize(self, input=None, num_pts=5000, radius=0.5):
+    def initialize(self, input=None, num_pts=5000, radius=0.5, AABB=np.array((0, 1, 0, 1, 0, 1))):
         # load checkpoint
         if input is None:
             # init from random point cloud
@@ -1037,7 +1085,7 @@ class Renderer:
             self.gaussians.create_from_pcd(input, 1)
         else:
             # load from saved ply
-            self.gaussians.load_ply(input)
+            self.gaussians.load_ply(input, AABB)
 
     def render(
         self,
@@ -1053,7 +1101,7 @@ class Renderer:
         static_points_mask = self.gaussians.static_points_mask
         screenspace_points = (
             torch.zeros_like(
-                torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz[static_points_mask == 0])),#CUSTOM,
+                torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz)),#CUSTOM,
                 #self.gaussians.get_xyz,
                 dtype=self.gaussians.get_xyz.dtype,
                 requires_grad=True,
@@ -1091,9 +1139,9 @@ class Renderer:
         #means2D = screenspace_points
         #opacity = self.gaussians.get_opacity
         # CUSTOM 
-        means3D = torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz[static_points_mask == 0]))
+        means3D = torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz))
         means2D = screenspace_points
-        opa = self.gaussians.opacity_activation(self.gaussians.original_opacity[static_points_mask == 0])
+        opa = self.gaussians.opacity_activation(self.gaussians.original_opacity)
         opacity = torch.vstack((self.gaussians.get_opacity, opa))
 
         # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
@@ -1108,8 +1156,8 @@ class Renderer:
             rotations = self.gaussians.get_rotation
 
         #CUSTOM
-        sca = self.gaussians.scaling_activation(self.gaussians.original_scaling[static_points_mask == 0])
-        rot = self.gaussians.rotation_activation(self.gaussians.original_rotation[static_points_mask == 0])
+        sca = self.gaussians.scaling_activation(self.gaussians.original_scaling)
+        rot = self.gaussians.rotation_activation(self.gaussians.original_rotation)
         scales = torch.vstack((scales, sca))
         rotations = torch.vstack((rotations, rot))
 
@@ -1159,9 +1207,9 @@ class Renderer:
                 transform = T.ToPILImage()
                 img = transform(input_tensor[0])
                 #img = img.save("debug/train_step_debug" + str(index) +".jpg")
-                img = img.save("debug/gaussian_raster_debug.jpg")
+                img = img.save("debug/gaussian_raster_depth_debug.jpg")
 
-        #write_image_to_drive(rendered_image)
+        #write_image_to_drive(rendered_depth)
 
         # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
         # They will be excluded from value updates used in the splitting criteria.

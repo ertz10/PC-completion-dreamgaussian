@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 import torchvision
-import torchvision.transforms as T 
+import torchvision.transforms as T
 from PIL import Image
 
 import rembg
@@ -79,7 +79,12 @@ class GUI:
         self.static_points_length = 0
         self.all_steps = []
 
-        self.customLoss = AABBLoss()
+        self.couch_AABB = np.array([0.0, 0.6, -0.2, 0.45, -0.25, 0.25], dtype=np.float32)
+        self.trashcan_AABB = np.array([-0.15, 0.15, -0.3, 0.3, -0.15, 0.15], dtype=np.float32)
+        self.elephant_AABB = np.array([-0.3, 0.3, -0.4, 0.4, 0.25, 0.6], dtype=np.float32)
+        self.hocker_AABB = np.array([0.0, 0.4, -0.4, 0.0, -0.2, 0.2], dtype=np.float32)
+        self.AABB = self.hocker_AABB
+        self.customLoss = AABBLoss(self.elephant_AABB)
         
         # load input data from cmdline
         if self.opt.input is not None:
@@ -127,19 +132,19 @@ class GUI:
                 points=xyz_full, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3))
             )
             
-            self.renderer.initialize(input=pcd)
+            self.renderer.initialize(input=pcd, AABB=self.AABB)
             #self.renderer.initialize(input=pcd_fulluniform)
 
             # MASK for static input points, only where mask is true will be optimized
-            self.static_points_mask = pts_merged.copy()
-            self.static_points_mask[0:len(pts)] = False
-            self.static_points_mask[len(pts):] = True
-            self.static_points_mask[0:4000] = False
-            self.static_points_mask[4000:] = True
-            self.static_points_mask = self.static_points_mask[:, 0]
+            #self.static_points_mask = pts_merged.copy()
+            #self.static_points_mask[0:len(pts)] = False
+            #self.static_points_mask[len(pts):] = True
+            #self.static_points_mask[0:4000] = False
+            #self.static_points_mask[4000:] = True
+            #self.static_points_mask = self.static_points_mask[:, 0]
             #self.original_points = pts_merged.copy()
             #self.variable_points_mask_length = len(self.static_points_mask[self.static_points_mask == True])
-            self.static_points_length = len(self.static_points_mask[self.static_points_mask == False])
+            #self.static_points_length = len(self.static_points_mask[self.static_points_mask == False])
 
             #debug pcd
             pcd_debug = o3d.geometry.PointCloud()
@@ -156,7 +161,7 @@ class GUI:
 
         # override if provide a checkpoint
         if self.opt.load is not None:
-            self.renderer.initialize(self.opt.load)            
+            self.renderer.initialize(self.opt.load, AABB=self.AABB)            
         else:
             # CUSTOM CODE
             if self.opt.point_cloud is None:
@@ -293,8 +298,9 @@ class GUI:
                 # add images
                 for i, img in enumerate(input_tensor):
                     transform = T.ToPILImage()
-                    image = transform(img[0])
-                    figure.paste(image, (i * img_width, 0))
+                    img = torch.tensor(img)
+                    img = transform(img[0])
+                    figure.paste(img, (i * img_width, 0))
 
                 figure.save("debug/train_step_debug.jpg")
 
@@ -337,14 +343,21 @@ class GUI:
                 # rgb loss
                 image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
                 loss = loss + 10000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(image, self.input_img_torch)
+                #loss = loss + 10000 * F.mse_loss(image, self.input_img_torch)
 
                 # mask loss
                 mask = out["alpha"].unsqueeze(0) # [1, 1, H, W] in [0, 1]
                 loss = loss + 1000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(mask, self.input_mask_torch)
+                #loss = loss + 1000 * F.mse_loss(mask, self.input_mask_torch)
 
             ### novel view (manual batch)
-            render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
+            render_resolution = 512 if step_ratio < 0.3 else (512 if step_ratio < 0.6 else 512)
             images = []
+            AABBimages = []
+            static_images = []
+            dynamic_images = []
+            static_depth_images = []
+            dynamic_depth_images = []
             poses = []
             vers, hors, radii = [], [], []
             # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
@@ -358,8 +371,8 @@ class GUI:
                 ver = np.random.randint(min_ver, max_ver)
                 hor = np.random.randint(-180, 180)
                 #CUSTOM
-                hor = int((360.0 / self.opt.iters) * self.step - 180.0)
-                radius = 0
+                #hor = int((360.0 / self.opt.iters) * self.step - 180.0)
+                radius = 0.0
 
                 vers.append(ver)
                 hors.append(hor)
@@ -372,6 +385,20 @@ class GUI:
 
                 bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
                 out = self.renderer.render(cur_cam, bg_color=bg_color)
+                #CUSTOM render Bounding Box to image
+                #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam, self.opt.radius + radius)
+                #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
+                #AABBimages.append(AABBimage)
+                ######################################################################
+                ########### dynamic, static point rendering ##########################
+                ######################################################################
+                static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
+                static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
+                static_depth_images.append(static_points_depth)
+                dynamic_depth_images.append(dynamic_points_depth)
+                ######################################################################
+                ######################################################################
 
                 image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
                 images.append(image)
@@ -386,11 +413,30 @@ class GUI:
 
                         # bg_color = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32, device="cuda")
                         out_i = self.renderer.render(cur_cam_i, bg_color=bg_color)
+                        #CUSTOM render Bounding Box to image
+                        #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam_i, self.opt.radius + radius)
+                        ######################################################################
+                        ########### dynamic, static point rendering ##########################
+                        ######################################################################
+                        static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam_i, bg_color=bg_color)
+                        static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                        dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
+                        static_depth_images.append(static_points_depth)
+                        dynamic_depth_images.append(dynamic_points_depth)
+                        #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
+                        #AABBimages.append(AABBimage)
+                        ######################################################################
+                        ######################################################################      
 
                         image = out_i["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
                         images.append(image)
 
-                if self.debug_step % 5 == 0:
+                # CUSTOM
+                #self.customLoss.write_capture_to_drive(AABBimages, cur_cam.image_width, cur_cam.image_height, len(AABBimages))
+                # Debug: TODO maybe remove later
+                #images_blended = self.customLoss.blend_images(AABBimages, images)
+
+                if self.debug_step % 1 == 0:
                     write_images_to_drive(images, 0)
                     self.debug_step = 0
 
@@ -404,36 +450,39 @@ class GUI:
             # guidance loss
             if self.enable_sd:
                 if self.opt.mvdream or self.opt.imagedream:
-                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                    loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="text", xp=xp, fp=fp) * self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
+                                                                                                                                                                            dynamic_images=dynamic_images, static_images=static_images, 
+                                                                                                                                                                            dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images)
                 else:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
             if self.enable_zero123:
-                loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation)
+                loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="image", xp=xp, fp=fp) * self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, self.input_img_torch, vers, hors, radii, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation, 
+                                                                                                                                                                                   dynamic_images=dynamic_images, static_images=static_images, 
+                                                                                                                                                                                   dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images)
+                #loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation)
             
             # TODO add loss for points inside/outside bounding box
-            self.AABB = np.array([0.0, 0.6, -0.2, 0.45, -0.25, 0.25])
-            loss = loss + self.customLoss.AABBLoss(self.AABB, self.renderer.gaussians, removePoints=False, step=self.step)
+            loss = loss + 1000.0 * self.customLoss.AABBLoss(self.AABB, self.renderer.gaussians, removePoints=False, step=self.step)
+
+            ################ REFERENCE IMAGE LOSS ########################
+            img_interp = F.interpolate(images, (256, 256), mode="bilinear", align_corners=False)
+            loss = loss + 10000.0 * F.mse_loss(img_interp[0].unsqueeze(0), self.input_img_torch)
+            write_image_to_drive(self.input_img_torch, 0)
+            ##############################################################
+
             # optimize step
             loss.backward()
             # CUSTOM this is where gaussian pos change happens, optimizer step
             self.optimizer.step()
             self.optimizer.zero_grad()
-            #original_xyz = self.original_points[:self.static_points_length]
-            with torch.no_grad():
-                original_xyz = self.renderer.gaussians.original_xyz #torch.tensor(original_xyz)
-                original_featuresdc = self.renderer.gaussians.original_featuresdc
-                original_features_rest = self.renderer.gaussians.original_features_rest
-                original_opacity = self.renderer.gaussians.original_opacity
-                original_scaling = self.renderer.gaussians.original_scaling
-                original_rotation = self.renderer.gaussians.original_rotation
 
             # densify and prune
             if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
                 #CUSTOM .to("cpu")
                 viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"].to("cuda"), out["radii"]
                 #CUSTOM
-                length = len(viewspace_point_tensor) - len(self.renderer.gaussians.static_points_mask[self.renderer.gaussians.static_points_mask == 0])
+                length = len(viewspace_point_tensor) - len(self.renderer.gaussians.original_xyz)#len(self.renderer.gaussians.static_points_mask[self.renderer.gaussians.static_points_mask == 0])
 
                 viewspace_point_tensor_temp = viewspace_point_tensor[0:length]
                 visibility_filter_temp = visibility_filter[0:length]
@@ -452,9 +501,9 @@ class GUI:
                 #############################################################
                 ####### [min_x, max_x, min_y, max_y, min_z, max_z] ##########
                 #if self.step % 2 == 0 and self.step < 100:
-                prune_checkpoints = np.array([1, 20])
-                if self.step in prune_checkpoints:
-                    self.renderer.gaussians.TestAgainstBB(self.AABB, removePoints=True)
+                #prune_checkpoints = np.array([20, 60, 100])
+                #if self.step in prune_checkpoints:
+                #    self.renderer.gaussians.TestAgainstBB(self.AABB, removePoints=True)
                 #############################################################
 
         ender.record()
