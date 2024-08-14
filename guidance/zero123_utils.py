@@ -36,6 +36,11 @@ class Zero123(nn.Module):
             trust_remote_code=True,
         ).to(self.device)
 
+        # CUSTOM model loading
+        # from https://github.com/guochengqian/Magic123/blob/main/guidance/zero123_utils.py
+        #self.model = load_model_from_confg(self.config, ckpt, device=self.device, vram_0=False)
+        #
+
         # stable-zero123 has a different camera embedding
         self.use_stable_zero123 = 'stable' in model_key
 
@@ -116,7 +121,10 @@ class Zero123(nn.Module):
             latents = self.scheduler.add_noise(latents, torch.randn_like(latents), self.scheduler.timesteps[init_step])
 
         T = self.get_cam_embeddings(elevation, azimuth, radius, default_elevation)
-        cc_emb = torch.cat([self.embeddings[0].repeat(batch_size, 1, 1), T], dim=-1)
+        #cc_emb = torch.cat([self.embeddings[0].repeat(batch_size, 1, 1), T], dim=-1)
+        # CUSTOM
+        cc_emb = torch.cat([self.embeddings[0].repeat(1, 1, 1), T], dim=-1)
+        #
         cc_emb = self.pipe.clip_camera_projection(cc_emb)
         cc_emb = torch.cat([cc_emb, torch.zeros_like(cc_emb)], dim=0)
 
@@ -186,10 +194,6 @@ class Zero123(nn.Module):
             ############################## Use Reference image to predict novel views ###################################
             pred_rgb_rendering_256 = F.interpolate(pred_rgb, (256, 256), mode='bilinear', align_corners=False) * 2 - 1 # first encode rendering of the scene
             latents = self.encode_imgs(pred_rgb_rendering_256.to(self.dtype))
-            # magic3d like https://arxiv.org/pdf/2306.17843
-            # take reference image for prediction now
-            ref_img = F.interpolate(reference_image, (256, 256), mode='bilinear', align_corners=False) * 2 - 1
-            latent_ref = self.encode_imgs(ref_img.to(self.dtype))
             #############################################################################################################
 
         if step_ratio is not None:
@@ -215,11 +219,17 @@ class Zero123(nn.Module):
                 noise_cat[i] = noise[0]
                 latents_noisy = self.scheduler.add_noise(latents, noise, t)
 
+                #x_in = torch.cat([latents_noisy] * 2)
+                #CUSTOM 
+                latents_noisy = latents_noisy[0].unsqueeze(0)
                 x_in = torch.cat([latents_noisy] * 2)
+                #
                 t_in = torch.cat([t] * 2)
 
                 # CUSTOM
                 azimuth[0] = azimuth[0] + (i * 90)
+                # get_img_embeds is already called in main.py
+                #self.get_img_embeds(reference_image) # writes to self.embeddings
                 #
                 T = self.get_cam_embeddings(elevation, azimuth, radius, default_elevation)
                 cc_emb = torch.cat([self.embeddings[0].repeat(batch_size, 1, 1), T], dim=-1)
@@ -234,9 +244,17 @@ class Zero123(nn.Module):
                     t_in.to(self.unet.dtype),
                     encoder_hidden_states=cc_emb,
                 ).sample
+                
+                # CUSTOM
+                # from https://github.com/cvlab-columbia/zero123/blob/main/zero123/gradio_new.py
+                #conditioning = {}
+                #conditioning['c_crossattn'] = [cc_emb]
+                #conditioning['c_concat'] = [self.model.encode_first_stage((reference_image.to(cc_emb.device))).mode().detach()]
+                # https://github.com/guochengqian/Magic123/blob/main/guidance/zero123_utils.py
+                #noise_pred = self.model.apply_model(x_in, t_in, conditioning)
 
                 #write_images_to_drive(self.decode_latents(noise_pred[0].half() - noise), 0, string="_target_masked")
-                write_images_to_drive(self.decode_latents(latents), 0, string="_target_masked")
+                #write_images_to_drive(self.decode_latents(latents), 0, string="_target_masked")
 
                 # CUSTOM
                 noise_pred_cond_cat[i] = noise_pred[0]#torch.cat([noise_pred_cat, noise_pred])
@@ -253,7 +271,8 @@ class Zero123(nn.Module):
 
         #grad = w * (noise_pred - noise) #SDS loss
         #CUSTOM
-        grad = w * (noise_pred - noise_cat) #SDS loss
+        # lambda 40 like magic123 uses
+        grad = w * 40.0 * (noise_pred - noise_cat) #SDS loss
         #
         grad = torch.nan_to_num(grad)
 
@@ -289,12 +308,10 @@ class Zero123(nn.Module):
         static_images = torch.stack((static_images))
         inverted_static_depth_interp = F.interpolate((inverted_static_depth * 1.0), (256, 256), mode="bilinear", align_corners=False)[0, :3]
         static_images_interp = F.interpolate((static_images * static_depth), (256, 256), mode="bilinear", align_corners=False)[0, :3]
-        #target = (self.decode_latents(target.half()) * inverted_static_depth_interp) + (static_images_interp.detach() * 1.0)
-        write_images_to_drive(self.decode_latents(grad.half()), 0, string="_target_masked")
-        #target = self.encode_imgs(target.half())
+        target = (self.decode_latents(target.half()) * inverted_static_depth_interp) + (static_images_interp.detach() * 1.0)
+        write_images_to_drive(target.half(), 0, string="_target_masked")
+        target = self.encode_imgs(target.half())
         ##########################################
-        # TODO calculate mse between rendered views and prediction based on Reference image ?
-        # so far, latents is just the reference view with noise
         loss = 0.5 * F.mse_loss(latents.float(), target.float(), reduction='sum')
 
         #TODO CUSTOM

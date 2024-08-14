@@ -194,6 +194,7 @@ class GUI:
             loss = 0
 
             ### known view
+            # TODO just don't load an input image
             if self.input_img_torch is not None and not self.opt.imagedream:
 
                 ssaa = min(2.0, max(0.125, 2 * np.random.random()))
@@ -270,11 +271,11 @@ class GUI:
                     refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
                     loss = loss + self.opt.lambda_sd * F.mse_loss(images, refined_images)
 
-            if self.enable_zero123:
+            # TODO Remove when reenabling zero123 if self.enable_zero123:
                 # loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio)
-                refined_images = self.guidance_zero123.refine(images, vers, hors, radii, strength=strength, default_elevation=self.opt.elevation).float()
-                refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
-                loss = loss + self.opt.lambda_zero123 * F.mse_loss(images, refined_images)
+                # TODO Remove when reenabling zero123 refined_images = self.guidance_zero123.refine(images, vers, hors, radii, strength=strength, default_elevation=self.opt.elevation).float()
+                # TODO Remove when reenabling zero123 refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
+                # TODO Remove when reenabling zero123 loss = loss + self.opt.lambda_zero123 * F.mse_loss(images, refined_images)
                 # loss = loss + self.opt.lambda_zero123 * self.lpips_loss(images, refined_images)
 
             # optimize step

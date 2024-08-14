@@ -83,8 +83,11 @@ class GUI:
         self.trashcan_AABB = np.array([-0.15, 0.15, -0.3, 0.3, -0.15, 0.15], dtype=np.float32)
         self.elephant_AABB = np.array([-0.3, 0.3, -0.4, 0.4, 0.25, 0.6], dtype=np.float32)
         self.hocker_AABB = np.array([0.0, 0.4, -0.4, 0.0, -0.2, 0.2], dtype=np.float32)
-        self.AABB = self.hocker_AABB
-        self.customLoss = AABBLoss(self.elephant_AABB)
+        self.vase_AABB = np.array([-0.2, 0.2, -0.5, 0.0, 0.1, 0.5], dtype=np.float32)
+        self.chicken_AABB = np.array([-0.1, 0.1, -0.3, -0.2, -0.1, 0.1], dtype=np.float32)
+        self.shoe_AABB = np.array([-0.1, 0.1, -0.2, -0.1, -0.4, 0.4], dtype=np.float32)
+        self.AABB = self.shoe_AABB
+        self.customLoss = AABBLoss(self.shoe_AABB)
         
         # load input data from cmdline
         if self.opt.input is not None:
@@ -342,16 +345,14 @@ class GUI:
 
                 # rgb loss
                 image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
-                loss = loss + 10000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(image, self.input_img_torch)
-                #loss = loss + 10000 * F.mse_loss(image, self.input_img_torch)
+                # TODO remove comment or remove input image from text only run loss = loss + 10000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(image, self.input_img_torch)                                                                                                          
 
                 # mask loss
                 mask = out["alpha"].unsqueeze(0) # [1, 1, H, W] in [0, 1]
-                loss = loss + 1000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(mask, self.input_mask_torch)
-                #loss = loss + 1000 * F.mse_loss(mask, self.input_mask_torch)
+                #loss = loss + 1000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(mask, self.input_mask_torch)
 
             ### novel view (manual batch)
-            render_resolution = 512 if step_ratio < 0.3 else (512 if step_ratio < 0.6 else 512)
+            render_resolution = 256 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
             images = []
             AABBimages = []
             static_images = []
@@ -369,16 +370,22 @@ class GUI:
                 # render random view
                 # CUSTOM maybe use not random but fixed angles per view ?
                 ver = np.random.randint(min_ver, max_ver)
+                #ver = -45.0
                 hor = np.random.randint(-180, 180)
                 #CUSTOM
                 #hor = int((360.0 / self.opt.iters) * self.step - 180.0)
+                #hor = 70.0#int((360.0 / self.opt.iters) - 180.0)
+
                 radius = 0.0
 
                 vers.append(ver)
                 hors.append(hor)
                 radii.append(radius)
 
+                # CUSTOM
                 pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
+                #pose = orbit_camera(self.opt.elevation, hor, self.opt.radius + radius)
+                #
                 poses.append(pose)
 
                 cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
@@ -406,6 +413,10 @@ class GUI:
                 # enable mvdream training
                 if self.opt.mvdream or self.opt.imagedream:
                     for view_i in range(1, 4):
+                        # Custom
+                        #hor = np.random.randint(-180, 180)
+                        #ver = np.random.randint(min_ver, max_ver)
+                        #
                         pose_i = orbit_camera(self.opt.elevation + ver, hor + 90 * view_i, self.opt.radius + radius)
                         poses.append(pose_i)
 
@@ -456,19 +467,19 @@ class GUI:
                 else:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
-            if self.enable_zero123:
-                loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="image", xp=xp, fp=fp) * self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, self.input_img_torch, vers, hors, radii, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation, 
-                                                                                                                                                                                   dynamic_images=dynamic_images, static_images=static_images, 
-                                                                                                                                                                                   dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images)
+            #if self.enable_zero123:
+                #loss = loss + 0.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="image", xp=xp, fp=fp) * self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, self.input_img_torch, vers, hors, radii, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation, 
+                #                                                                                                                                                                   dynamic_images=dynamic_images, static_images=static_images, 
+                #                                                                                                                                                                   dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images)
                 #loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation)
             
             # TODO add loss for points inside/outside bounding box
-            loss = loss + 1000.0 * self.customLoss.AABBLoss(self.AABB, self.renderer.gaussians, removePoints=False, step=self.step)
+            #loss = loss + 1000.0 * self.customLoss.AABBLoss(self.AABB, self.renderer.gaussians, removePoints=False, step=self.step)
 
             ################ REFERENCE IMAGE LOSS ########################
-            img_interp = F.interpolate(images, (256, 256), mode="bilinear", align_corners=False)
-            loss = loss + 10000.0 * F.mse_loss(img_interp[0].unsqueeze(0), self.input_img_torch)
-            write_image_to_drive(self.input_img_torch, 0)
+            #img_interp = F.interpolate(images, (256, 256), mode="bilinear", align_corners=False)
+            #loss = loss + 10000.0 * F.mse_loss(img_interp[0].unsqueeze(0), self.input_img_torch)
+            #write_image_to_drive(self.input_img_torch, 0)
             ##############################################################
 
             # optimize step
@@ -495,16 +506,6 @@ class GUI:
                 
                 if self.step % self.opt.opacity_reset_interval == 0:
                     self.renderer.gaussians.reset_opacity()
-
-                ######################### CUSTOM ############################
-                ############ Test points against bounding box ###############
-                #############################################################
-                ####### [min_x, max_x, min_y, max_y, min_z, max_z] ##########
-                #if self.step % 2 == 0 and self.step < 100:
-                #prune_checkpoints = np.array([20, 60, 100])
-                #if self.step in prune_checkpoints:
-                #    self.renderer.gaussians.TestAgainstBB(self.AABB, removePoints=True)
-                #############################################################
 
         ender.record()
         torch.cuda.synchronize()

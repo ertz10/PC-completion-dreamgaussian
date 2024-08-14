@@ -171,10 +171,12 @@ class AABBLoss:
         interp = 0.0
         if(guidance_type == "text"):
             interp = np.interp(step, xp, fp)
+            interp = 1.0
             print("Text guidance weighting: ", interp)
         if(guidance_type == "image"):
             # apply more image guidance in earlier steps
             interp = 1.0 - np.interp(step, xp, fp)
+            interp = 1.0
             print("Image guidance weighting: ", interp)
         return interp
 
