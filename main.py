@@ -80,14 +80,17 @@ class GUI:
         self.all_steps = []
 
         self.couch_AABB = np.array([0.0, 0.6, -0.2, 0.45, -0.25, 0.25], dtype=np.float32)
+        self.couch_captured_angles_hor = [0, 180] # hard coded for now
         self.trashcan_AABB = np.array([-0.15, 0.15, -0.3, 0.3, -0.15, 0.15], dtype=np.float32)
         self.elephant_AABB = np.array([-0.3, 0.3, -0.4, 0.4, 0.25, 0.6], dtype=np.float32)
         self.hocker_AABB = np.array([0.0, 0.4, -0.4, 0.0, -0.2, 0.2], dtype=np.float32)
         self.vase_AABB = np.array([-0.2, 0.2, -0.5, 0.0, 0.1, 0.5], dtype=np.float32)
         self.chicken_AABB = np.array([-0.1, 0.1, -0.3, -0.2, -0.1, 0.1], dtype=np.float32)
-        self.shoe_AABB = np.array([-0.1, 0.1, -0.2, -0.1, -0.4, 0.4], dtype=np.float32)
+        self.shoe_AABB = np.array([-0.1, 0.0, -0.2, -0.2, -0.4, 0.4], dtype=np.float32)
+        self.shoe_captured_angles_hor = [0, 130] # hard coded for now, gives the approximate angles of the best views on the static part
         self.AABB = self.shoe_AABB
         self.customLoss = AABBLoss(self.shoe_AABB)
+        self.captured_angles_hor = self.shoe_captured_angles_hor
         
         # load input data from cmdline
         if self.opt.input is not None:
@@ -322,9 +325,9 @@ class GUI:
             ##########################################################
             #xp = [0,    100,  200,  300, 450, 500,  600]
             #fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.8, 0.99]
-            xp = [0,    150,  200,  300, 450, 500,  600]
-            fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.8, 0.99]
-            #step_ratio =  np.interp(self.step, xp, fp)
+            xp = [0,    150,  200,  300, 400, 450,  500, 1000]
+            fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.7, 0.7, 0.9]
+            step_ratio =  np.interp(self.step, xp, fp)
             self.all_steps = np.append(self.all_steps, step_ratio)
             ############# plot #####################
             plt.plot(np.arange(self.step), np.ones(len(self.all_steps)) - self.all_steps)
@@ -352,7 +355,7 @@ class GUI:
                 #loss = loss + 1000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(mask, self.input_mask_torch)
 
             ### novel view (manual batch)
-            render_resolution = 256 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
+            render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
             images = []
             AABBimages = []
             static_images = []
@@ -371,12 +374,15 @@ class GUI:
                 # CUSTOM maybe use not random but fixed angles per view ?
                 ver = np.random.randint(min_ver, max_ver)
                 #ver = -45.0
+                #if(self.step % 9 == 0):
+                #    hor = 75.0
+                #else:
                 hor = np.random.randint(-180, 180)
                 #CUSTOM
                 #hor = int((360.0 / self.opt.iters) * self.step - 180.0)
                 #hor = 70.0#int((360.0 / self.opt.iters) - 180.0)
 
-                radius = 0.0
+                radius = -1.25
 
                 vers.append(ver)
                 hors.append(hor)
@@ -391,7 +397,14 @@ class GUI:
                 cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
 
                 bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
+                # Custom
+                out = None
+                #if (self.step == 500):
+                #    out = self.renderer.render(cur_cam, bg_color=bg_color)
+                #else:
+                    # ONLY FOR DEBUG PURPOSE TODO remove in final version
                 out = self.renderer.render(cur_cam, bg_color=bg_color)
+
                 #CUSTOM render Bounding Box to image
                 #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam, self.opt.radius + radius)
                 #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
@@ -416,14 +429,25 @@ class GUI:
                         # Custom
                         #hor = np.random.randint(-180, 180)
                         #ver = np.random.randint(min_ver, max_ver)
-                        #
+
+                        #if(self.step % 9 == 0):
+                        #    pose_i = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
+                        #    hors.append(hor)
+                        #else:
                         pose_i = orbit_camera(self.opt.elevation + ver, hor + 90 * view_i, self.opt.radius + radius)
+                        hors.append(hor + 90 * view_i)
+
                         poses.append(pose_i)
 
                         cur_cam_i = MiniCam(pose_i, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
 
                         # bg_color = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32, device="cuda")
+                        #if (self.step == 500):
+                        #    out_i = self.renderer.render(cur_cam_i, bg_color=bg_color)
+                        #else:
+                            # ONLY FOR DEBUG PURPOSE TODO remove in final version
                         out_i = self.renderer.render(cur_cam_i, bg_color=bg_color)
+
                         #CUSTOM render Bounding Box to image
                         #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam_i, self.opt.radius + radius)
                         ######################################################################
@@ -463,7 +487,7 @@ class GUI:
                 if self.opt.mvdream or self.opt.imagedream:
                     loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="text", xp=xp, fp=fp) * self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                                                                                                                                                                             dynamic_images=dynamic_images, static_images=static_images, 
-                                                                                                                                                                            dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images)
+                                                                                                                                                                            dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor)
                 else:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
@@ -483,6 +507,7 @@ class GUI:
             ##############################################################
 
             # optimize step
+
             loss.backward()
             # CUSTOM this is where gaussian pos change happens, optimizer step
             self.optimizer.step()

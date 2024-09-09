@@ -52,6 +52,8 @@ class MVDream(nn.Module):
         self.max_step = int(self.num_train_timesteps * t_range[1])
         self.all_steps = []
 
+        self.latents_noisy = None
+
         self.embeddings = {}
 
         self.scheduler = DDIMScheduler.from_pretrained(
@@ -143,12 +145,14 @@ class MVDream(nn.Module):
         camera, # [B, 4, 4]
         customLoss,
         step_ratio=None,
-        guidance_scale=100, #8 had good results so far, without normalization
+        guidance_scale=7.5, #8 had good results so far, without normalization
         as_latent=False,
         dynamic_images=None,
         static_images=None,
         dynamic_depth_images=None,
-        static_depth_images=None
+        static_depth_images=None,
+        current_cam_hors=[0, 0, 0, 0],
+        captured_angles_hor=[0, 0]
     ):
         
         # CUSTOM
@@ -193,10 +197,10 @@ class MVDream(nn.Module):
         #CUSTOM
         #self.base_ratio = 1.0 / 500.0 # 1 / overall iterations
         self.train_steps += 1
-        self.num_train_timesteps = 200
+        #self.num_train_timesteps = 200
         #TODO BEWARE !!!! self.num_train_time_steps also has to be adjusted 
         # above in the init section!! since max and min steps depend on it!!
-        self.num_train_timesteps = 800# * (1.0 - step_ratio*4.0)
+        #self.num_train_timesteps = 400# * (1.0 - step_ratio*4.0)
         #self.num_train_timesteps = 400
         #if self.train_steps < 150:
         #    step_ratio *= 0.5
@@ -209,6 +213,14 @@ class MVDream(nn.Module):
         #    guidance_scale = 2
         #self.all_steps = np.append(self.all_steps, step_ratio) # collect all steps for graph plot
 
+        # CUSTOM
+        img_width = static_images[0].shape[1]
+        img_height = static_images[0].shape[2]
+        if(img_width > 256):
+            img_width = 256
+        if(img_height > 256):
+            img_height = 256
+        #
         
         batch_size = pred_rgb.shape[0]
         real_batch_size = batch_size // 4
@@ -218,26 +230,8 @@ class MVDream(nn.Module):
             latents = F.interpolate(pred_rgb, (32, 32), mode="bilinear", align_corners=False) * 2 - 1
         else:
             # interp to 256x256 to be fed into vae.
-            pred_rgb_256 = F.interpolate(pred_rgb, (256, 256), mode="bilinear", align_corners=False)
+            pred_rgb_256 = F.interpolate(pred_rgb, (img_width, img_height), mode="bilinear", align_corners=False)
             # encode image into latents with vae, requires grad!
-            ################ CUSTOM gaussian blurring ? ################
-            #gaussian_kernel_size = 1 if (142 - (self.train_steps * 2 - 1)) < 1 else (142 - (self.train_steps * 2 - 1))
-            #xp = np.arange(600)
-            #fp = np.arange(200)
-            #for i in range(0, 200):
-            #    if(fp[i] % 2 == 1):
-            #        fp[i] = i # is odd
-            #    else:
-            #        fp[i] = i - 1 # when even
-            #fp[0] = 1
-            # truncate
-            #step = np.floor(200/64).astype(int)
-            #fp = fp[0:64]
-            # repeat each element by step
-            #fp = np.repeat(fp, step)
-            #gaussian_kernel_size = 1#64 - fp[self.train_steps] if self.train_steps < 190 else 1
-            #pred_rgb_256 = torchvision.transforms.functional.gaussian_blur(pred_rgb_256, int(gaussian_kernel_size))
-            ############################################################
             latents = self.encode_imgs(pred_rgb_256)
 
         t = 0
@@ -290,12 +284,102 @@ class MVDream(nn.Module):
         embeddings = torch.cat([self.embeddings['neg'].repeat(real_batch_size, 1, 1), self.embeddings['pos'].repeat(real_batch_size, 1, 1)], dim=0)
         context = {"context": embeddings, "camera": camera, "num_frames": 4}
 
+        with torch.no_grad():
+            ######### ADD both binary masked images #############
+            #imgs_blended = customLoss.blend_images(dynamic_images, static_images, dynamic_depth_images, static_depth_images)
+            dynamic_depth, static_depth = customLoss.blend_images(dynamic_images, static_images, dynamic_depth_images, static_depth_images)
+
+            # TODO blend grad and static regions of rendering, so grad results in zero in those regions
+            static_depth = torch.stack((static_depth)).detach()
+            i0 = torch.vstack((static_depth[0], static_depth[0], static_depth[0], static_depth[0])).unsqueeze(0)
+            i1 = torch.vstack((static_depth[1], static_depth[1], static_depth[1], static_depth[1])).unsqueeze(0)
+            i2 = torch.vstack((static_depth[2], static_depth[2], static_depth[2], static_depth[2])).unsqueeze(0)
+            i3 = torch.vstack((static_depth[3], static_depth[3], static_depth[3], static_depth[3])).unsqueeze(0)
+            static_depth = torch.vstack((i0, i1, i2, i3))
+            dynamic_depth = torch.stack((dynamic_depth)).detach()
+            i0 = torch.vstack((dynamic_depth[0], dynamic_depth[0], dynamic_depth[0], dynamic_depth[0])).unsqueeze(0)
+            i1 = torch.vstack((dynamic_depth[1], dynamic_depth[1], dynamic_depth[1], dynamic_depth[1])).unsqueeze(0)
+            i2 = torch.vstack((dynamic_depth[2], dynamic_depth[2], dynamic_depth[2], dynamic_depth[2])).unsqueeze(0)
+            i3 = torch.vstack((dynamic_depth[3], dynamic_depth[3], dynamic_depth[3], dynamic_depth[3])).unsqueeze(0)
+            dynamic_depth = torch.vstack((i0, i1, i2, i3))
+            inverted_static_depth = static_depth.clone().detach()
+            inverted_static_depth[static_depth == 0] = 1.0
+            inverted_static_depth[static_depth == 1] = 0.0
+            ##################################################################
+            ##################################################################
+
+            ######################## BLENDED DIFFUSION #######################
+            static_images = torch.stack((static_images)).detach()
+            # TODO maybe instead of multiplying by alpha, gaussian blur the binary mask directly ?
+            #static_images_interp = F.interpolate((static_images * static_depth), (256, 256), mode="bilinear", align_corners=False)[:, :3]
+
+            # TODO add noisy static regions
+            # TODO blend target with static image regions
+            alphas_dyn = torch.stack((dynamic_images))[:, 3:].detach()
+            alphas_dyn = torch.repeat_interleave(alphas_dyn, 4, dim=1)
+            alphas_stat = static_images[:, 3:].detach()
+            alphas_stat = F.interpolate((alphas_stat), (img_width, img_height), mode="bilinear", align_corners=False)
+            alphas_stat = torch.repeat_interleave(alphas_stat, 4, dim=1)
+            inverted_static_depth = F.interpolate((inverted_static_depth * 1.0), (img_width, img_height), mode="bilinear", align_corners=False)[:, :3]
+            #inverted_static_depth = F.interpolate((inverted_static_depth * 1.0), (32, 32), mode="bilinear", align_corners=False)
+            dynamic_depth = F.interpolate((dynamic_depth * 1.0), (img_width, img_height), mode="bilinear", align_corners=False)
+            static_depth = F.interpolate((static_depth * 1.0), (img_width, img_height), mode="bilinear", align_corners=False)
+            static_images = F.interpolate((static_images), (img_width, img_height), mode="bilinear", align_corners=False)[:, :3]
+            #static_images = F.interpolate((static_images), (256, 256), mode="bilinear", align_corners=False)
+            images_static = static_images[:, :3] * static_depth[:, :3]#F.interpolate((static_images * static_depth), (256, 256), mode="bilinear", align_corners=False)[:, :3]
+            #images_static = static_images * static_depth #F.interpolate((static_images * static_depth), (256, 256), mode="bilinear", align_corners=False)[:, :3]
+            ###################################################################
+
+        # decode first ####################################################
+        #latents_noisy = self.decode_latents(latents_noisy)
+        ######TODO remove comment latents_noisy_before_blended_diff = torch.clone(latents_noisy)
+        # background + dynamic region + static region
+        ######TODO remove comment bg_mask = torch.logical_and(dynamic_depth < 1.0, static_depth < 1.0).bool().int() * 1.0
+        ######TODO remove comment latents_noisy = latents_noisy * bg_mask[:,:3] + latents_noisy * dynamic_depth[:,:3] + latents_noisy_static.detach() * static_depth[:,:3]
+        # encode again
+        ######TODO remove comment latents_noisy = self.encode_imgs(latents_noisy)
+        ######TODO remove comment latents_noisy_before_blended_diff = self.encode_imgs(latents_noisy_before_blended_diff)
+        #latents = self.decode_latents(latents)
+        # background + dynamic region + static region
+        bg_mask = torch.logical_and(dynamic_depth < 1.0, static_depth < 1.0).bool().int() * 1.0
+        #latents = latents * bg_mask[:,:3] + latents * dynamic_depth[:,:3] + images_static * static_depth[:,:3]
+        #latents = latents * bg_mask + latents * dynamic_depth + images_static * static_depth
+        #latents = self.encode_imgs(latents)
+
+        with torch.no_grad():
+
+            static_depth_images = torch.stack(static_depth_images)
+            static_depth_images /= torch.max(static_depth_images) # to range [0, 1]
+            # depth map is in weird range, so normalize it
+            #mean = torch.mean(static_depth_images, dim=(1, 2, 3))
+            #std = torch.std(static_depth_images, dim=(1, 2, 3))
+            #transform = T.Compose([T.Normalize(mean, std)])
+            #static_depth_images = transform(static_depth_images)
+            static_depth_images = F.interpolate((static_depth_images * 1.0), (img_width, img_height), mode="bilinear", align_corners=False)
+            static_region = (static_depth_images < 1.0).bool().int() * 1.0 # * alphas_stat
+            static_region = torch.repeat_interleave((static_region), (3), dim=1)
+            
+            # CHECK if first camera angle is in a "good" angle, such that we can overlay the static part completely
+            current_cam_hors = torch.FloatTensor(current_cam_hors)
+            valid_cams = torch.logical_and(current_cam_hors >= captured_angles_hor[0], current_cam_hors <= captured_angles_hor[1]) #and current_cam_hors <= captured_angles_hor[1]
+            valid_cams = valid_cams.nonzero() # get indices
+            print("VALID CAMS: " + str(valid_cams))
+            if (valid_cams.shape[0] != 0):
+                for valid_cam in valid_cams:
+                    # overlay complete static region (only for first image)
+                    # TODO remove this
+                    valid_cams = valid_cams
+                    #latents[valid_cams][static_region[valid_cams].int().bool()] = (static_images[valid_cams] * alphas_stat[valid_cams,:3])[static_region[valid_cams,:3].int().bool()]
+                    #latents[valid_cams][static_region[valid_cams].int().bool()] = static_images[valid_cams][static_region[valid_cams].int().bool()]
+        #latents = self.encode_imgs(latents)
+        # #################################################################
+
+        '''
         # predict the noise residual with unet, NO grad!
         with torch.no_grad():
+
             # add noise
             noise = torch.randn_like(latents)
-            #CUSTOM
-            #t = (t/10).to(torch.int64)
             # GOOD resource https://colab.research.google.com/drive/1dlgggNa5Mz8sEAGU0wFCHhGLFooW_pf1#scrollTo=pj33ZTHKUYIx
             # https://www.reddit.com/r/StableDiffusion/comments/xalo78/fixing_excessive_contrastsaturation_resulting/ #
             #################### TODO try some normalization to tackle high SD contrast ? #####################
@@ -306,75 +390,14 @@ class MVDream(nn.Module):
             latent_model_input = torch.cat([latents_noisy] * 2)
             tt = torch.cat([t] * 2)
 
-            ######### ADD both binary masked images #############
-            #imgs_blended = customLoss.blend_images(dynamic_images, static_images, dynamic_depth_images, static_depth_images)
-            dynamic_depth, static_depth = customLoss.blend_images(dynamic_images, static_images, dynamic_depth_images, static_depth_images)
-
             #write_images_to_drive(torch.stack((dynamic_images))[:, 3:], string="_depth_compare")
-
-            # TODO blend grad and static regions of rendering, so grad results in zero in those regions
-            ######TODO remove comment static_depth = torch.stack((static_depth))
-            ######TODO remove comment i0 = torch.vstack((static_depth[0], static_depth[0], static_depth[0], static_depth[0])).unsqueeze(0)
-            ######TODO remove comment i1 = torch.vstack((static_depth[1], static_depth[1], static_depth[1], static_depth[1])).unsqueeze(0)
-            ######TODO remove comment i2 = torch.vstack((static_depth[2], static_depth[2], static_depth[2], static_depth[2])).unsqueeze(0)
-            ######TODO remove comment i3 = torch.vstack((static_depth[3], static_depth[3], static_depth[3], static_depth[3])).unsqueeze(0)
-            ######TODO remove comment static_depth = torch.vstack((i0, i1, i2, i3))
-            ######TODO remove comment dynamic_depth = torch.stack((dynamic_depth))
-            ######TODO remove comment i0 = torch.vstack((dynamic_depth[0], dynamic_depth[0], dynamic_depth[0], dynamic_depth[0])).unsqueeze(0)
-            ######TODO remove comment i1 = torch.vstack((dynamic_depth[1], dynamic_depth[1], dynamic_depth[1], dynamic_depth[1])).unsqueeze(0)
-            ######TODO remove comment i2 = torch.vstack((dynamic_depth[2], dynamic_depth[2], dynamic_depth[2], dynamic_depth[2])).unsqueeze(0)
-            ######TODO remove comment i3 = torch.vstack((dynamic_depth[3], dynamic_depth[3], dynamic_depth[3], dynamic_depth[3])).unsqueeze(0)
-            ######TODO remove comment dynamic_depth = torch.vstack((i0, i1, i2, i3))
-            ######TODO remove comment inverted_static_depth = static_depth.clone().detach()
-            ######TODO remove comment inverted_static_depth[static_depth == 0] = 1.0
-            ######TODO remove comment inverted_static_depth[static_depth == 1] = 0.0
-            #####################################################
-            ####################
 
             # import kiui
             # kiui.lo(latent_model_input, t, context['context'], context['camera'])
             
             #noise_pred = self.model.apply_model(latent_model_input, tt, context)
 
-            ######################## BLENDED DIFFUSION #######################
-            ######TODO remove comment static_images = torch.stack((static_images))
-            # TODO maybe instead of multiplying by alpha, gaussian blur the binary mask directly ?
-            #inverted_static_depth_interp = F.interpolate((inverted_static_depth), (256, 256), mode="bilinear", align_corners=False)[:, :3]
-            #static_images_interp = F.interpolate((static_images * static_depth), (256, 256), mode="bilinear", align_corners=False)[:, :3]
-            ######TODO remove comment static_images = F.interpolate((static_images), (256, 256), mode="bilinear", align_corners=False)[:, :3]
-            ######TODO remove comment static_images = self.encode_imgs(static_images)
-            ######TODO remove comment latents_noisy_static = self.model.q_sample(static_images, t, noise)
-            #latent_model_input_static = torch.cat([latents_noisy_static] * 2)
-
-            # TODO add noisy static regions
-            # TODO blend target with static image regions
-            ######TODO remove comment alphas = torch.stack((dynamic_images))[:, 3:].detach()
-            ######TODO remove comment alphas = torch.repeat_interleave(alphas, 4, dim=1)
-            # TODO maybe instead of multiplying by alpha, gaussian blur the binary mask directly ?
-            ######TODO remove comment inverted_static_depth = F.interpolate((inverted_static_depth * 1.0), (256, 256), mode="bilinear", align_corners=False)[:, :3]
-            ######TODO remove comment dynamic_depth = F.interpolate((dynamic_depth * 1.0), (256, 256), mode="bilinear", align_corners=False)
-            ######TODO remove comment static_depth = F.interpolate((static_depth * 1.0), (256, 256), mode="bilinear", align_corners=False)
-            ######TODO remove comment static_images = self.decode_latents(static_images)
-            ######TODO remove comment static_images_interp = static_images[:, :3] * static_depth[:, :3]#F.interpolate((static_images * static_depth), (256, 256), mode="bilinear", align_corners=False)[:, :3]
-            ######TODO remove comment static_images = self.encode_imgs(static_images)
-            
-            #static_depth = self.encode_imgs(static_depth[:,:3] * 1.0)
-            #dynamic_depth = self.encode_imgs(dynamic_depth[:,:3] * 1.0)
-
-            # decode first
-            ######TODO remove comment latents_noisy = self.decode_latents(latents_noisy)
-            ######TODO remove comment latents_noisy_before_blended_diff = torch.clone(latents_noisy)
-            ######TODO remove comment latents_noisy_static = self.decode_latents(latents_noisy_static)
-            # background + dynamic region + static region
-            ######TODO remove comment bg_mask = torch.logical_and(dynamic_depth < 1.0, static_depth < 1.0).bool().int() * 1.0
-            ######TODO remove comment latents_noisy = latents_noisy * bg_mask[:,:3] + latents_noisy * dynamic_depth[:,:3] + latents_noisy_static.detach() * static_depth[:,:3]
-            # encode again
-            ######TODO remove comment latents_noisy = self.encode_imgs(latents_noisy)
-            ######TODO remove comment latents_noisy_before_blended_diff = self.encode_imgs(latents_noisy_before_blended_diff)
-            #
-
             # PREDICT
-            latent_model_input = torch.cat([latents_noisy] * 2)
             noise_pred = self.model.apply_model(latent_model_input, tt, context)
             #
 
@@ -383,18 +406,6 @@ class MVDream(nn.Module):
             ######TODO remove comment dynamic_depth = torch.cat([dynamic_depth] * 2)
             ######TODO remove comment latents_noisy_static = torch.cat([latents_noisy_static] * 2)
             ######TODO remove comment bg_mask = torch.cat([bg_mask] * 2)
-
-            # decode first
-            ######TODO remove comment noise_pred = self.decode_latents(noise_pred)
-            ######TODO remove comment noise_pred_before_blended_diff = torch.clone(noise_pred)
-            # background + dynamic region + static region
-            ######TODO remove comment noise_pred = noise_pred * bg_mask[:,:3] + noise_pred * dynamic_depth[:,:3] + latents_noisy_static[:,:3].detach() * static_depth[:,:3]
-            # encode again
-            ######TODO remove comment noise_pred = self.encode_imgs(noise_pred)
-            ######TODO remove comment noise_pred_before_blended_diff = self.encode_imgs(noise_pred_before_blended_diff)
-            ######TODO remove comment latents_noisy_static = self.encode_imgs(latents_noisy_static)
-            #
-            ###################################################################
 
             # perform guidance (high scale from paper!)
             noise_pred_uncond, noise_pred_pos = noise_pred.chunk(2)
@@ -405,20 +416,56 @@ class MVDream(nn.Module):
             ######TODO remove comment noise_pred_before_blended_diff = noise_pred_uncond + guidance_scale * (noise_pred_pos - noise_pred_uncond)
             #
 
+            # decode first
+
+            #noise_pred = self.decode_latents(noise_pred)
+            ######TODO remove comment noise_pred_before_blended_diff = torch.clone(noise_pred)
+            # background + dynamic region + static region
+            # use initial noise for static part, so grad = (noise_pred - noise) cancels out in this region
+            #noise_pred = noise_pred * bg_mask[:,:3] + noise_pred[:,:3].detach() * dynamic_depth[:,:3] + self.decode_latents(noise) * static_depth[:,:3]
+            # encode again
+            #noise_pred = self.encode_imgs(noise_pred)
+            ######TODO remove comment noise_pred_before_blended_diff = self.encode_imgs(noise_pred_before_blended_diff)
+            ######TODO remove comment latents_noisy_static = self.encode_imgs(latents_noisy_static)
+            #
+            ###################################################################
+            '''
+        steps = 50
+        strength = 0.8
+        self.scheduler.set_timesteps(steps)
+        init_step = int(steps * strength)
+        noise = torch.randn_like(latents)
+        latents = self.scheduler.add_noise(latents, noise, self.scheduler.timesteps[init_step])
+
+        with torch.no_grad():
+            for i, t_param in enumerate(self.scheduler.timesteps[init_step:]):
+                latent_model_input = torch.cat([latents] * 2)
+
+                tt = torch.cat([t_param.unsqueeze(0).repeat(batch_size)] * 2).to(self.device)
+
+                noise_pred = self.model.apply_model(latent_model_input, tt, context)
+
+                noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+
+                latents = self.scheduler.step(noise_pred, t_param, latents).prev_sample
+
         # CUSTOM
         with_recon_loss = False
         # paper reconstruction loss is equivalent to standard SDS formulation w * (noise_pred - noise)
         if with_recon_loss:
             #noise_pred_before = noise_pred.clone()
             # CFG RESCALING https://github.com/DSaurus/threestudio-mvdream/blob/main/guidance/mvdream_guidance.py
-            write_images_to_drive(self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred)), string="_noise_pred_before_rescale")
-            latents_recon = self.cfg_rescale(latents_noisy, noise_pred_pos, noise_pred, t)
+            #write_images_to_drive(self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred)), string="_noise_pred_before_rescale")
+            '''latents_recon = self.cfg_rescale(latents_noisy, noise_pred_pos, noise_pred, t)'''
             #write_images_to_drive(self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred)), string="_noise_pred_after_rescale")
-            write_images_to_drive(self.decode_latents(self.model.predict_start_from_noise(latents_recon, t, noise_pred)), string="_noise_pred_after_rescale")
+            #write_images_to_drive(self.decode_latents(self.model.predict_start_from_noise(latents_recon, t, noise_pred)), string="_noise_pred_after_rescale")
 
             # calculate loss
+            '''
             loss = 0.5 * F.mse_loss(latents.float(), latents_recon.detach(), reduction="sum") / latents.shape[0]
             grad = torch.autograd.grad(loss, latents, retain_graph=True)[0]
+            '''
 
             # just for debug
             target = (latents - grad).detach()
@@ -427,6 +474,7 @@ class MVDream(nn.Module):
             w = (1 - self.alphas[t]).view(batch_size, 1, 1, 1)
             # Original SDS
             #grad = w * 40.0 * (noise_pred - noise)
+            #grad = w * (noise_pred - noise)
             grad = (noise_pred - noise)
             #grad = w * (noise_pred - noise) * (1.0 + step_ratio * 4.0)
             grad = torch.nan_to_num(grad)
@@ -437,35 +485,60 @@ class MVDream(nn.Module):
             target = (latents - grad).detach()
 
             # CUSTOM target blending
-            ######TODO remove comment target = (self.decode_latents(target) * inverted_static_depth) + (static_images_interp.detach() * 1.0) # use detach for static_images_interp, otherwise it will throw gradient error
-            ######TODO remove comment target = self.encode_imgs(target)
-            #
+            target = self.decode_latents(target)
+            #target = (target * inverted_static_depth.detach().cpu()) + (static_images.detach().cpu() * 1.0) # use detach for static_images_interp, otherwise it will throw gradient error
+            #target = (target * inverted_static_depth) + (images_static * alphas_stat[:,:3])
+            #target[static_depth[:,:3].int().bool()] = (images_static * alphas_stat[:,:3])[static_depth[:,:3].int().bool()]
+            target[static_depth[:,:3].int().bool()] = (images_static * alphas_stat[:,:3])[static_depth[:,:3].int().bool()]
+            # DO AGAIN FOR TARGET: CHECK if first camera angle is in a "good" angle, such that we can overlay the static part completely
+            write_images_to_drive(target * inverted_static_depth, string="_target_times_invertedstaticdepth")
+            if (valid_cams.shape[0] != 0):
+                for valid_cam in valid_cams:
+                    write_images_to_drive(alphas_stat, string="_alphas")
+                    write_images_to_drive(static_region.int().float(), string="_static_images")
+                    #if(self.train_steps % 10 == 0):
+                    #    target = target
+                    #else:
+                    #target[valid_cam][static_region[valid_cam].int().bool()] = (static_images[valid_cam] * alphas_stat[valid_cam,:3])[static_region[valid_cam,:3].int().bool()]#static_depth[0,:3]
+                    bool_mask = static_region[valid_cam].int().bool().squeeze(0)
+                    alphas_stat = alphas_stat[:,:3]
+                    target[valid_cam, bool_mask] = static_images[valid_cam, bool_mask] * alphas_stat[valid_cam, bool_mask]#static_depth[0,:3]
+                    #target[i][static_region[i].int().bool()] = static_images[i][static_region[i].int().bool()]#static_depth[0,:3]
 
+            #target = self.encode_imgs(target).detach()
+            latents = self.decode_latents(latents)
             loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
-
-        # from https://github.com/DSaurus/threestudio-mvdream/blob/main/guidance/mvdream_guidance.py
-        #grad = torch.autograd.grad(loss, latents, retain_graph=True)[0]
+            
+            ############### Custom loss on features of dynamic splats to resemble existing static part #############
+            #dynamic_images = latents
+            #static_images = self.encode_imgs(static_images)
+            loss += 0.5 * F.mse_loss(latents.float(), static_images, reduction='sum') / latents.shape[0] * 0.25
 
         #CUSTOM
-        self.debug_step += 1
-        if self.debug_step % 1 == 0:
-                #write_images_to_drive(imgs, string="_latents_denoised")
-                #write_images_to_drive(imgs_target, string="_target")
-                #write_images_to_drive(imgs_latents, string="_latents")
-                #write_images_to_drive(imgs_noise_pred, string="_noise_pred_blended_diffusion")
-                noisy_input = self.decode_latents(latents_noisy).detach().cpu()
-                gs_renders = self.decode_latents(latents).detach().cpu()
-                ######TODO remove comment latent_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy_before_blended_diff, t, noise_pred_before_blended_diff)).detach().cpu()
-                #latent_output = self.decode_latents(noise_pred - noise).detach().cpu()
-                blended_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred)).detach().cpu()
-                target_debug = self.decode_latents(target).detach().cpu()
-                batch_write_images_to_drive(noisy_input, gs_renders, target_debug, blended_output, blended_output, string="_batch_debug")
-                #write_images_to_drive(imgs_static_depth, string="_static_depth")
-                #write_images_to_drive(imgs_dynamic_depth, string="_dynamic_depth")
-                print("guidance scale (mvdream): ", guidance_scale)
-                print("t: ", t[0])
-                print("num timesteps ", self.num_train_timesteps)
-                self.debug_step = 0
+        with torch.no_grad():
+            self.debug_step += 1
+            if self.debug_step % 1 == 0:
+                    #write_images_to_drive(imgs, string="_latents_denoised")
+                    #write_images_to_drive(imgs_target, string="_target")
+                    #write_images_to_drive(imgs_latents, string="_latents")
+                    #write_images_to_drive(imgs_noise_pred, string="_noise_pred_blended_diffusion")
+                    #noisy_input = self.decode_latents(latents_noisy)
+                    noisy_input = self.decode_latents(latents)
+                    gs_renders = latents#self.decode_latents(latents)
+                    ######TODO remove comment latent_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy_before_blended_diff, t, noise_pred_before_blended_diff)).detach().cpu()
+                    latent_output = self.decode_latents(noise_pred - noise)
+                    #blended_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))
+                    blended_output = self.decode_latents(self.model.predict_start_from_noise(latents, t, noise_pred))
+                    target_debug = target#self.decode_latents(target)
+                    
+                    batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, blended_output, string="_batch_debug")
+                    
+                    print("good Horizontal angles: " + str(current_cam_hors))
+                    print("guidance scale (mvdream): ", guidance_scale)
+                    print("t: ", t[0])
+                    print("num timesteps ", self.num_train_timesteps)
+                    #print(torch.cuda.memory_summary())
+                    self.debug_step = 0
         
 
         return loss

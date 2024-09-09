@@ -437,13 +437,22 @@ class GaussianModel:
     def save_ply(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        xyz = self._xyz.detach().cpu().numpy()
+        #xyz = self._xyz.detach().cpu().numpy()
+        #normals = np.zeros_like(xyz)
+        #f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        #f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        #opacities = self._opacity.detach().cpu().numpy()
+        #scale = self._scaling.detach().cpu().numpy()
+        #rotation = self._rotation.detach().cpu().numpy()
+
+        #CUSTOM
+        xyz = np.vstack((self._xyz.detach().cpu().numpy(), self.original_xyz.detach().cpu().numpy()))
         normals = np.zeros_like(xyz)
-        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = self._opacity.detach().cpu().numpy()
-        scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
+        f_dc = np.vstack((self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy(), self.original_featuresdc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()))
+        f_rest = np.vstack((self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy(), self.original_features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()))
+        opacities = np.vstack((self._opacity.detach().cpu().numpy(), self.original_opacity.detach().cpu().numpy()))
+        scale = np.vstack((self._scaling.detach().cpu().numpy(), self.original_scaling.detach().cpu().numpy()))
+        rotation = np.vstack((self._rotation.detach().cpu().numpy(), self.original_rotation.detach().cpu().numpy()))
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
@@ -661,9 +670,9 @@ class GaussianModel:
         xyz = rotated_pts + np.array([0, 0.2, 0])
 
         xyz, scales, rots, opacities, features_dc, features_extra = createHalfNoise(xyz, scales, rots, opacities, 
-                                                                                                                  features_dc, #dc
-                                                                                                                  features_extra) #extra
-        individual_scales = [-3, -3, -3]
+                                                                                                                features_dc, #dc
+                                                                                                                features_extra) #extra
+        individual_scales = [-4, -4, -4]
         #'''
         #######################################################################################################
         ########### COUCH #####################################################################################
@@ -821,9 +830,9 @@ class GaussianModel:
         rots = self.customGSTransform.rotate(rots, rotation)
         rots = self.customGSTransform.rotate(rots, rotation2)
         rots = self.customGSTransform.rotate(rots, rotation3)
-        #rots = self.customGSTransform.rotate(rots, rotation4)
+        #rots = self.customGSTransform.rotate(rots, rotation4) 
         scales = (scales) - np.log(norm_factor)
-        individual_scales = [-3.5, -3.5, -3.5]
+        individual_scales = [-4.0, -4.0, -4.0]
         #xyz = xyz[:1]
         #rots = rots[:1]
         #scales = scales[:1]
@@ -840,7 +849,7 @@ class GaussianModel:
         #############################################
         # TODO initialize inside bounding box!
         
-        num_pts = 500 # TODO hardcoded at the moment, not good
+        num_pts = 5000 # TODO hardcoded at the moment, not good
         radius = 0.5
         # init from random point cloud
         #phis = np.random.random((num_pts,)) * 2 * np.pi
@@ -859,7 +868,7 @@ class GaussianModel:
 
         #xyz[mask_subsampled.astype(int) == 1] = xyz_2
         xyz = np.vstack((xyz_2, xyz))
-        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy() #* 0.2
+        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy() - 1.0
         opacities = np.vstack((temp_opacities, opacities))
         temp_scales = np.repeat([individual_scales], len(xyz_2), axis = 0)
         scales = np.vstack((temp_scales, scales))
@@ -1204,13 +1213,19 @@ class Renderer:
         override_color=None,
         compute_cov3D_python=False,
         convert_SHs_python=False,
+        only_dynamic_splats=False
     ):
         # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
         #CUSTOM
-        static_points_mask = self.gaussians.static_points_mask
+        xyz = None
+        if (only_dynamic_splats):
+            xyz = self.gaussians.get_xyz
+        else:
+            xyz = torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz))
+
         screenspace_points = (
             torch.zeros_like(
-                torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz)),#CUSTOM,
+                xyz,#CUSTOM,
                 #self.gaussians.get_xyz,
                 dtype=self.gaussians.get_xyz.dtype,
                 requires_grad=True,
@@ -1218,6 +1233,7 @@ class Renderer:
             )
             + 0
         )
+
         try:
             screenspace_points.retain_grad()
         except:
@@ -1248,10 +1264,14 @@ class Renderer:
         #means2D = screenspace_points
         #opacity = self.gaussians.get_opacity
         # CUSTOM 
-        means3D = torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz))
+        opac = None
+        if (only_dynamic_splats):
+            opac = self.gaussians.get_opacity
+        else:
+            opac = torch.vstack((self.gaussians.get_opacity, self.gaussians.opacity_activation(self.gaussians.original_opacity)))
+        means3D = xyz
         means2D = screenspace_points
-        opa = self.gaussians.opacity_activation(self.gaussians.original_opacity)
-        opacity = torch.vstack((self.gaussians.get_opacity, opa))
+        opacity = opac
 
         # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
         # scaling / rotation by the rasterizer.
@@ -1265,10 +1285,16 @@ class Renderer:
             rotations = self.gaussians.get_rotation
 
         #CUSTOM
-        sca = self.gaussians.scaling_activation(self.gaussians.original_scaling)
-        rot = self.gaussians.rotation_activation(self.gaussians.original_rotation)
-        scales = torch.vstack((scales, sca))
-        rotations = torch.vstack((rotations, rot))
+        sc = None
+        rot = None
+        if (only_dynamic_splats):
+            sc = scales
+            rot = rotations
+        else:
+            sc = torch.vstack((scales, self.gaussians.scaling_activation(self.gaussians.original_scaling)))
+            rot = torch.vstack((rotations, self.gaussians.rotation_activation(self.gaussians.original_rotation)))
+        scales = sc
+        rotations = rot
 
         # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
         # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.

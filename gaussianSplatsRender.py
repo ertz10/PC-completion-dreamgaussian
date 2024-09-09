@@ -145,10 +145,10 @@ class GaussianCustomRenderer:
         #rot = gaussians.rotation_activation(gaussians.original_rotation[static_points_mask == 0])
         #scales = torch.vstack((scales, sca))
         #rotations = torch.vstack((rotations, rot))
-        min_gaussians_scaling = torch.vstack((gaussians._scaling, gaussians.original_scaling))[minima]
-        max_gaussians_scaling = torch.vstack((gaussians._scaling, gaussians.original_scaling))[maxima]
-        min_gaussians_rotation = torch.vstack((gaussians._rotation, gaussians.original_rotation))[minima]
-        max_gaussians_rotation = torch.vstack((gaussians._rotation, gaussians.original_rotation))[maxima]
+        #min_gaussians_scaling = torch.vstack((gaussians._scaling, gaussians.original_scaling))[minima]
+        #max_gaussians_scaling = torch.vstack((gaussians._scaling, gaussians.original_scaling))[maxima]
+        #min_gaussians_rotation = torch.vstack((gaussians._rotation, gaussians.original_rotation))[minima]
+        #max_gaussians_rotation = torch.vstack((gaussians._rotation, gaussians.original_rotation))[maxima]
         sc = torch.tensor((-6.0, -6.0, -6.0), device='cuda')
         ro = torch.tensor((0.0, 0.0, 0.0, 0.0), device='cuda')
         uniform_scaling = torch.vstack((sc, sc, sc, sc))

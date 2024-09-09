@@ -35,7 +35,7 @@ warmup_rgb_loss: True
 # training batch size per iter
 batch_size: 1 # default 1
 # training iterations for stage 1
-iters: 500
+iters: 1000
 # whether to linearly anneal timestep
 anneal_timestep: True #default True
 # training iterations for stage 2
@@ -65,7 +65,7 @@ W: 800
 ### Gaussian splatting
 num_pts: 5000
 sh_degree: 3 #default 0
-position_lr_init: 0.001 #default 0.001
+position_lr_init: 0.001 #default 0.001 #CHANGED
 position_lr_final: 0.00002 #default 0.00002
 position_lr_delay_mult: 0.02 # default 0.02
 position_lr_max_steps: 300 #default 300
@@ -78,7 +78,7 @@ density_start_iter: 0 #default 0
 density_end_iter: 3000 #default 3000
 #CUSTOM default 50
 densification_interval: 50 #default 50
-opacity_reset_interval: 700 #default 700
+opacity_reset_interval: 1100 #default 700
 densify_grad_threshold: 0.01 #default 0.01
 
 ### Textured Mesh
