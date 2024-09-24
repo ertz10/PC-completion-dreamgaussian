@@ -79,14 +79,16 @@ class GUI:
         self.static_points_length = 0
         self.all_steps = []
 
-        self.couch_AABB = np.array([0.0, 0.6, -0.2, 0.45, -0.25, 0.25], dtype=np.float32)
-        self.couch_captured_angles_hor = [0, 180] # hard coded for now
+        self.couch_AABB = np.array([-0.0, 0.8, -0.3, 0.3, -0.25, 0.25], dtype=np.float32)
+        self.couch_captured_angles_hor = [-180, 0] # hard coded for now
         self.trashcan_AABB = np.array([-0.15, 0.15, -0.3, 0.3, -0.15, 0.15], dtype=np.float32)
         self.elephant_AABB = np.array([-0.3, 0.3, -0.4, 0.4, 0.25, 0.6], dtype=np.float32)
         self.hocker_AABB = np.array([0.0, 0.4, -0.4, 0.0, -0.2, 0.2], dtype=np.float32)
         self.vase_AABB = np.array([-0.2, 0.2, -0.5, 0.0, 0.1, 0.5], dtype=np.float32)
+        self.vase_captured_angles_hor = [-180, 0]
         self.chicken_AABB = np.array([-0.1, 0.1, -0.3, -0.2, -0.1, 0.1], dtype=np.float32)
-        self.shoe_AABB = np.array([-0.1, 0.0, -0.2, -0.2, -0.4, 0.4], dtype=np.float32)
+        self.shoe_AABB = np.array([-0.1, 0.1, -0.2, 0.0, -0.3, 0.1], dtype=np.float32)
+        #self.shoe_AABB = np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2], dtype=np.float32)
         self.shoe_captured_angles_hor = [0, 130] # hard coded for now, gives the approximate angles of the best views on the static part
         self.AABB = self.shoe_AABB
         self.customLoss = AABBLoss(self.shoe_AABB)
@@ -288,7 +290,7 @@ class GUI:
                 # transform torch tensor to rgb image and write to drive for DEBUG purposes
                 transform = T.ToPILImage()
                 img = transform(input_tensor[0])
-                img = img.save("debug/train_step_debug" + str(index) +".jpg")
+                img = img.save(r"debug/train_step_debug" + str(index) + r".jpg")
                 #img = img.save("debug/train_step_debug.jpg")
 
         # CUSTOME
@@ -308,7 +310,7 @@ class GUI:
                     img = transform(img[0])
                     figure.paste(img, (i * img_width, 0))
 
-                figure.save("debug/train_step_debug.jpg")
+                figure.save(r"debug/train_step_debug.jpg", "JPEG")
 
         starter = torch.cuda.Event(enable_timing=True)
         ender = torch.cuda.Event(enable_timing=True)
@@ -327,12 +329,12 @@ class GUI:
             #fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.8, 0.99]
             xp = [0,    150,  200,  300, 400, 450,  500, 1000]
             fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.7, 0.7, 0.9]
-            step_ratio =  np.interp(self.step, xp, fp)
+            #step_ratio =  np.interp(self.step, xp, fp)
             self.all_steps = np.append(self.all_steps, step_ratio)
             ############# plot #####################
             plt.plot(np.arange(self.step), np.ones(len(self.all_steps)) - self.all_steps)
-            plt.show()
-            plt.savefig("debug/graph_plot.png")
+            #plt.show()
+            #plt.savefig(r"debug/graph_plot.png")
             ##########################################################
 
             # update lr
@@ -382,7 +384,7 @@ class GUI:
                 #hor = int((360.0 / self.opt.iters) * self.step - 180.0)
                 #hor = 70.0#int((360.0 / self.opt.iters) - 180.0)
 
-                radius = -1.25
+                radius = -1.20#-1.25
 
                 vers.append(ver)
                 hors.append(hor)

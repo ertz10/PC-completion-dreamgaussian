@@ -406,6 +406,7 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
 
+        # CUSTOM
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
@@ -565,6 +566,7 @@ class GaussianModel:
             return xyz.mean(axis=0)
 
         #CUSTOM
+        '''
         def createHalfNoise(xyz: np.ndarray, scales: np.ndarray, rots: np.ndarray, opacities: np.ndarray, features_dc: np.ndarray, features_extra: np.ndarray):
 
             
@@ -598,7 +600,7 @@ class GaussianModel:
             #SUBSAMPLE NOISY PART
             indices = indices.astype(int)
             subsample_count = 2000
-            '''
+            #
             indices = np.random.choice(indices, size=subsample_count)
             subsamples_xyz = xyz[indices]
             subsamples_scales = scales[indices]
@@ -614,11 +616,12 @@ class GaussianModel:
             mask_subsampled = np.hstack((subsamples_mask, mask[mask == 0]))
             features_dc = np.vstack((subsamples_features_dc, features_dc[mask == 0]))
             features_extra = np.vstack((subsamples_features_extra, features_extra[mask == 0]))
-            '''
+            
             #count = 5000
 
             #return xyz, scales, rots, opacities, subsample_count, features_dc, features_extra, mask, mask_subsampled
             return xyz, scales, rots, opacities, features_dc, features_extra
+        '''
     
         plydata = PlyData.read(path)
 
@@ -663,16 +666,21 @@ class GaussianModel:
         ########### COUCH #####################################################################################
         #######################################################################################################
         '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts) # TODO also normalize scale!! maybe don't normalize ???
         rotation = trimesh.transformations.rotation_matrix(3.14159, [0, 0, 1], [0, 0, 0]) # angle is in radians
-        rotated_pts = transform_points_around_pivot(pts=translated_pts, trans_matrix=rotation, pivot=[0,0,0])
+        rotated_pts = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0,0,0])
         rotation = trimesh.transformations.rotation_matrix(0.2618, [1, 0, 0], [0, 0, 0]) # angle is in radians
         rotated_pts = transform_points_around_pivot(pts=rotated_pts, trans_matrix=rotation, pivot=[0,0,0])
-        xyz = rotated_pts + np.array([0, 0.2, 0])
+        xyz = rotated_pts + np.array([-0.5, 0.0, 0.0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-1, -1, -1]
 
-        xyz, scales, rots, opacities, features_dc, features_extra = createHalfNoise(xyz, scales, rots, opacities, 
-                                                                                                                features_dc, #dc
-                                                                                                                features_extra) #extra
-        individual_scales = [-4, -4, -4]
+
+        #xyz, scales, rots, opacities, features_dc, features_extra = createHalfNoise(xyz, scales, rots, opacities, 
+        #                                                                                                        features_dc, #dc
+        #                                                                                                        features_extra) #extra
+        individual_scales = [-3, -3, -3]
         #'''
         #######################################################################################################
         ########### COUCH #####################################################################################
@@ -832,7 +840,7 @@ class GaussianModel:
         rots = self.customGSTransform.rotate(rots, rotation3)
         #rots = self.customGSTransform.rotate(rots, rotation4) 
         scales = (scales) - np.log(norm_factor)
-        individual_scales = [-4.0, -4.0, -4.0]
+        individual_scales = [-3.0, -3.0, -3.0]
         #xyz = xyz[:1]
         #rots = rots[:1]
         #scales = scales[:1]
@@ -849,7 +857,7 @@ class GaussianModel:
         #############################################
         # TODO initialize inside bounding box!
         
-        num_pts = 5000 # TODO hardcoded at the moment, not good
+        num_pts = 500 # TODO hardcoded at the moment, not good
         radius = 0.5
         # init from random point cloud
         #phis = np.random.random((num_pts,)) * 2 * np.pi

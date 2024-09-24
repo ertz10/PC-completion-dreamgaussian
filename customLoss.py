@@ -131,10 +131,10 @@ class AABBLoss:
             #dynamic_depth.append(depth_img)
             #static_depth.append(depth_images_2[idx])
 
-        self.write_capture_to_drive(depth_images_1, depth_images_1[0].shape[1], depth_images_1[0].shape[2], 4, "_dynamic_depth_image")            
-        self.write_capture_to_drive(depth_images_2, depth_images_2[0].shape[1], depth_images_2[0].shape[2], 4, "_static_depth_image")            
-        self.write_capture_to_drive(dynamic_depth, dynamic_depth[0].shape[1], dynamic_depth[0].shape[2], 4, "_dynamic_depth")
-        self.write_capture_to_drive(static_depth, static_depth[0].shape[1], static_depth[0].shape[2], 4, "_static_depth")
+        self.write_capture_to_drive(depth_images_1, depth_images_1[0].shape[1], depth_images_1[0].shape[2], 4, r"_dynamic_depth_image")            
+        self.write_capture_to_drive(depth_images_2, depth_images_2[0].shape[1], depth_images_2[0].shape[2], 4, r"_static_depth_image")            
+        self.write_capture_to_drive(dynamic_depth, dynamic_depth[0].shape[1], dynamic_depth[0].shape[2], 4, r"_dynamic_depth")
+        self.write_capture_to_drive(static_depth, static_depth[0].shape[1], static_depth[0].shape[2], 4, r"_static_depth")
 
         imgs_blended = images1.copy()
         for i, img in enumerate(images1):
@@ -163,7 +163,7 @@ class AABBLoss:
                 image = transform(img)
                 figure.paste(image, (i * image_width, 0))
 
-            figure.save("debug/DepthBlending_rendering_debug" + str(string) + ".png")
+            figure.save(r"debug/DepthBlending_rendering_debug" + str(string), "JPEG")
 
     def guidance_weighting(self, step: int, guidance_type: str, xp: list, fp: list):
         

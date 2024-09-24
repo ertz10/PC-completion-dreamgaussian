@@ -35,7 +35,7 @@ warmup_rgb_loss: True
 # training batch size per iter
 batch_size: 1 # default 1
 # training iterations for stage 1
-iters: 1000
+iters: 500
 # whether to linearly anneal timestep
 anneal_timestep: True #default True
 # training iterations for stage 2
