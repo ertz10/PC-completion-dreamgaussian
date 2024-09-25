@@ -1,0 +1,3 @@
+[submodule "diff-gaussian-rasterization-w-depth-custom"]
+	path = diff-gaussian-rasterization-w-depth-custom
+	url = https://github.com/ertz10/diff-gaussian-rasterization-w-depth-custom.git
