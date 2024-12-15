@@ -151,7 +151,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int):
+    def __init__(self, sh_degree : int, opt_object):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         # CUSTOM
@@ -180,6 +180,7 @@ class GaussianModel:
         self.original_scaling = None
         self.original_rotation = None
         self.customGSTransform = GaussianTransform()
+        self.opt_object = opt_object
 
     def capture(self):
         return (
@@ -259,15 +260,26 @@ class GaussianModel:
 
         assert resolution % block_size == 0
         split_size = resolution // num_blocks
-
+        
+        # TODO include original gaussian splats as well
         opacities = self.get_opacity
+        #opacities = self.original_opacity
+        opacities = torch.vstack((self.get_opacity, self.opacity_activation(self.original_opacity)))
 
         # pre-filter low opacity gaussians to save computation
         mask = (opacities > 0.005).squeeze(1)
+        # CUSTOM
+        #mask = torch.logical_and(mask, ~torch.isinf(mask))
 
+        #opacities = opacities[mask]
+        #xyzs = self.get_xyz[mask]
+        #stds = self.get_scaling[mask]
+        #opacities = opacities[mask]
+        #xyzs = self.original_xyz[mask]
+        #stds = self.original_scaling[mask]
         opacities = opacities[mask]
-        xyzs = self.get_xyz[mask]
-        stds = self.get_scaling[mask]
+        xyzs = torch.vstack((self.get_xyz, self.original_xyz))[mask]
+        stds = torch.vstack((self.get_scaling, self.scaling_activation(self.original_scaling)))[mask]
         
         # normalize to ~ [-1, 1]
         mn, mx = xyzs.amin(0), xyzs.amax(0)
@@ -277,7 +289,10 @@ class GaussianModel:
         xyzs = (xyzs - self.center) * self.scale
         stds = stds * self.scale
 
-        covs = self.covariance_activation(stds, 1, self._rotation[mask])
+        #covs = self.covariance_activation(stds, 1, self._rotation[mask])
+        #covs = self.covariance_activation(stds, 1, self.original_rotation[mask])
+        covs = self.covariance_activation(stds, 1, torch.vstack((self._rotation, self.original_rotation))[mask])
+        #covs = self.covariance_activation(stds, 1, self.original_rotation[mask])
 
         # tile
         device = opacities.device
@@ -537,8 +552,8 @@ class GaussianModel:
             self.removeElements(bools_final)
         else:
             return bools_final
-    
-    def load_ply(self, path, AABB):
+        
+    def load_static_ply(self, path):
         import trimesh
         #@ERLER
         def transform_points_around_pivot(pts: np.ndarray, trans_matrix: np.ndarray, pivot: np.ndarray):
@@ -565,64 +580,6 @@ class GaussianModel:
         def calculateCenterOfMass(xyz: np.ndarray):
             return xyz.mean(axis=0)
 
-        #CUSTOM
-        '''
-        def createHalfNoise(xyz: np.ndarray, scales: np.ndarray, rots: np.ndarray, opacities: np.ndarray, features_dc: np.ndarray, features_extra: np.ndarray):
-
-            
-            count = 0
-            mask = np.zeros(len(xyz))
-            indices = np.array([])
-            #for i in range(0, len(xyz)-1):
-            counter = 0
-            for i in xyz:
-                #print("X:", xyz[i, 0], ", Y:", xyz[i, 1], ", Z:", xyz[i, 2])
-                #if xyz[i, 0] > 0.0:
-                if i[0] > 0.0:
-                    #noise = (np.random.rand(3) - 0.5) * 0.5
-                    #xyz[i] += noise
-                    #scales[i] = np.array((-3, -3, -3))
-                    #rots[i] = np.array((1, 0, 0, 0))
-                    #opacities[i] = inverse_sigmoid(torch.tensor((0.1))).item()
-                    #count += 1
-                    #mask[i] = 1
-                    xyz = np.delete(xyz, counter, axis=0)
-                    scales = np.delete(scales, counter, axis=0)
-                    rots = np.delete(rots, counter, axis=0)
-                    opacities = np.delete(opacities, counter, axis=0)
-                    features_dc = np.delete(features_dc, counter, axis=0)
-                    features_extra = np.delete(features_extra, counter, axis=0)
-                    counter -= 1
-                    count += 1
-                    indices = np.append(indices, counter) 
-                counter += 1
-                    
-            #SUBSAMPLE NOISY PART
-            indices = indices.astype(int)
-            subsample_count = 2000
-            #
-            indices = np.random.choice(indices, size=subsample_count)
-            subsamples_xyz = xyz[indices]
-            subsamples_scales = scales[indices]
-            subsamples_rots = rots[indices]
-            subsamples_opacities = opacities[indices]
-            subsamples_mask = mask[indices]
-            subsamples_features_dc = features_dc[indices]
-            subsamples_features_extra = features_extra[indices]
-            xyz = np.vstack((subsamples_xyz, xyz[mask == 0]))
-            scales = np.vstack((subsamples_scales, scales[mask == 0]))
-            rots = np.vstack((subsamples_rots, rots[mask == 0]))
-            opacities = np.vstack((subsamples_opacities, opacities[mask == 0]))
-            mask_subsampled = np.hstack((subsamples_mask, mask[mask == 0]))
-            features_dc = np.vstack((subsamples_features_dc, features_dc[mask == 0]))
-            features_extra = np.vstack((subsamples_features_extra, features_extra[mask == 0]))
-            
-            #count = 5000
-
-            #return xyz, scales, rots, opacities, subsample_count, features_dc, features_extra, mask, mask_subsampled
-            return xyz, scales, rots, opacities, features_dc, features_extra
-        '''
-    
         plydata = PlyData.read(path)
 
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
@@ -665,14 +622,15 @@ class GaussianModel:
         #######################################################################################################
         ########### COUCH #####################################################################################
         #######################################################################################################
-        '''
+        #'''
         xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts) # TODO also normalize scale!! maybe don't normalize ???
         rotation = trimesh.transformations.rotation_matrix(3.14159, [0, 0, 1], [0, 0, 0]) # angle is in radians
+        rots = self.customGSTransform.rotate(rots, rotation)
         rotated_pts = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0,0,0])
         rotation = trimesh.transformations.rotation_matrix(0.2618, [1, 0, 0], [0, 0, 0]) # angle is in radians
+        rots = self.customGSTransform.rotate(rots, rotation)
         rotated_pts = transform_points_around_pivot(pts=rotated_pts, trans_matrix=rotation, pivot=[0,0,0])
         xyz = rotated_pts + np.array([-0.5, 0.0, 0.0])
-        rots = self.customGSTransform.rotate(rots, rotation)
         scales = (scales) - np.log(norm_factor)
         individual_scales = [-1, -1, -1]
 
@@ -719,7 +677,7 @@ class GaussianModel:
         #rots = self.customGSTransform.rotate(rots, rotation2)
         scales = (scales) - np.log(norm_factor)
         individual_scales = [-3, -3, -3]
-        '''
+        #'''
         #######################################################################################################
         ########### Elephant ##################################################################################
         #######################################################################################################
@@ -769,6 +727,7 @@ class GaussianModel:
         xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
         xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
         #xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation4, pivot=[0, 0, 0])
+        xyz += np.array([0, 0.2, 0]) 
         #centroid = calculateCenterOfMass(xyz)
         #xyz = xyz + np.array([-0.2, 0, 0])
         rots = self.customGSTransform.rotate(rots, rotation)
@@ -823,7 +782,7 @@ class GaussianModel:
         #######################################################################################################
         ########### Shoe ##################################################################################
         #######################################################################################################
-        #'''
+        '''
         xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
         rotation = trimesh.transformations.rotation_matrix(1.8, [1, 0, 0], [0, 0, 0]) #30 deg
         rotation2 = trimesh.transformations.rotation_matrix(-0.75, [0, 0, 1], [0, 0, 0]) #90 deg
@@ -852,33 +811,388 @@ class GaussianModel:
         ########### Shoe end ################################################################################
         #######################################################################################################
 
-        #############################################
-        # Init half of object to gaussian blob ######
-        #############################################
-        # TODO initialize inside bounding box!
+        # remove big splats
+        xyz, rots, scales, opacities, features_dc, features_extra = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc, features_extra)
+
+        mask_subsampled = np.zeros(len(xyz))
+
+        fused_point_cloud = torch.tensor(np.asarray(xyz)).float().cuda()
+        fused_color = RGB2SH(torch.tensor(np.asarray(xyz)).float().cuda())
+        features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
+        #features[:, :3, 0 ] = torch.tensor([0.1, 0.1, 0.1], dtype=torch.float, device="cuda")
+        #features[:, 3:, 1:] = 0.0
+        # Average of existing colors
+        avg_col = np.mean(features_dc, axis=0).squeeze(1)#torch.mean(SH2RGB(fused_color), dim=0)
+        #avg_col = RGB2SH(avg_col) * 255.0
+        features[:, :3, 0] = torch.tensor(avg_col, dtype=torch.float, device="cuda")
+        #features[:, :3, 0] = torch.tensor([0.1, 0.1, 0.1], dtype=torch.float, device="cuda")
+        features[:, 3:, 1:] = 0.0
+
+
+        pcd_debug = o3d.geometry.PointCloud()
+        pcd_debug.points = o3d.utility.Vector3dVector(xyz)
+        #pcd_debug.points = o3d.utility.Vector3dVector(xyz_full)
+        o3d.io.write_point_cloud("debug/pcd_debug_transformed.ply", pcd_debug)
+
+        '''
+        self._xyz = nn.Parameter(torch.tensor(xyz[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
+        self._features_dc = nn.Parameter(torch.tensor(features_dc[mask_subsampled == 1], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        # TODO try to scrap features_rest
+        self._features_rest = nn.Parameter(torch.tensor(features_extra[mask_subsampled == 1], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._opacity = nn.Parameter(torch.tensor(opacities[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
+        self._scaling = nn.Parameter(torch.tensor(scales[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
+        self._rotation = nn.Parameter(torch.tensor(rots[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
+
+        self.active_sh_degree = self.max_sh_degree
+        self.spatial_lr_scale = 10
+        self.static_points_mask = mask_subsampled.copy()
+        #self.max_radii2D = torch.zeros((self.get_xyz.shape[0] + len(mask_subsampled[mask_subsampled == 0])), device="cuda")
+        self.max_radii2D = torch.zeros((len(self.static_points_mask[self.static_points_mask == 1])), device="cuda")
+        #self.max_radii2D = torch.zeros((len(self.static_points_mask)), device="cuda")
+        '''
+
+        self._xyz = torch.tensor(xyz[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self._features_dc = torch.tensor(features_dc[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(False)
+        self._features_rest = torch.tensor(features_extra[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(False)
+        self._opacity = torch.tensor(opacities[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self._scaling = torch.tensor(scales[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self._rotation = torch.tensor(rots[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+
+        self.active_sh_degree = self.max_sh_degree
+        self.spatial_lr_scale = 10
+        self.static_points_mask = mask_subsampled.copy()
+        #self.max_radii2D = torch.zeros((self.get_xyz.shape[0] + len(mask_subsampled[mask_subsampled == 0])), device="cuda")
+        self.max_radii2D = torch.zeros((len(self.static_points_mask[self.static_points_mask == 1])), device="cuda")
+        #self.max_radii2D = torch.zeros((len(self.static_points_mask)), device="cuda")
+
+        self.original_xyz = torch.tensor(xyz[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self.original_featuresdc = torch.tensor(features_dc[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
+        self.original_features_rest = torch.tensor(features_extra[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
+        self.original_opacity = torch.tensor(opacities[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self.original_scaling = torch.tensor(scales[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+        self.original_rotation = torch.tensor(rots[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
+    
+    def load_ply(self, path, AABB):
+        import trimesh
+        #@ERLER
+        def transform_points_around_pivot(pts: np.ndarray, trans_matrix: np.ndarray, pivot: np.ndarray):
+            """
+            rotate_points_around_pivot
+            :param pts: np.ndarray[n, dims=3]
+            :param rotation_mat: np.ndarray[4, 4]
+            :param pivot: np.ndarray[dims=3]
+            :return:
+            """
+            
+            #pivot_bc = np.broadcast_to(pivot[np.newaxis, :], pts.shape)
+
+            #pts -= pivot_bc
+            pts = trimesh.transformations.transform_points(pts, trans_matrix)
+            #pts += pivot_bc
+
+            return pts
         
-        num_pts = 500 # TODO hardcoded at the moment, not good
-        radius = 0.5
+        #CUSTOM
+        
+
+        #CUSTOM
+        def calculateCenterOfMass(xyz: np.ndarray):
+            return xyz.mean(axis=0)
+    
+        plydata = PlyData.read(path)
+
+        xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
+                        np.asarray(plydata.elements[0]["y"]),
+                        np.asarray(plydata.elements[0]["z"])),  axis=1)
+        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+
+        print("Number of points at loading : ", xyz.shape[0])
+
+        features_dc = np.zeros((xyz.shape[0], 3, 1))
+        features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
+        features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
+        features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+
+        extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
+        assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
+        features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
+        for idx, attr_name in enumerate(extra_f_names):
+            features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
+        # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
+        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+
+        scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
+        scales = np.zeros((xyz.shape[0], len(scale_names)))
+        for idx, attr_name in enumerate(scale_names):
+            scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
+        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
+        rots = np.zeros((xyz.shape[0], len(rot_names)))
+        for idx, attr_name in enumerate(rot_names):
+            rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
+        #CUSTOM apply rigid transformation to xyz
+        #rotation = R.from_euler('zyx', [-92.5, 0, -110.5], degrees=True)
+        #x
+        centroid = calculateCenterOfMass(xyz)
+        # first center point cloud
+        translated_pts = xyz - centroid
+        #rotation = trimesh.transformations.euler_matrix(0, 0, 180, 'sxyz')#trimesh.transformations.rotation_matrix(-110.5, [1, 0, 0], [0, 0, 0])
+        #######################################################################################################
+        ########### COUCH #####################################################################################
+        #######################################################################################################
+        '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts) # TODO also normalize scale!! maybe don't normalize ???
+        rotation = trimesh.transformations.rotation_matrix(3.14159, [0, 0, 1], [0, 0, 0]) # angle is in radians
+        rots = self.customGSTransform.rotate(rots, rotation)
+        rotated_pts = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0,0,0])
+        rotation = trimesh.transformations.rotation_matrix(0.2618, [1, 0, 0], [0, 0, 0]) # angle is in radians
+        rots = self.customGSTransform.rotate(rots, rotation)
+        rotated_pts = transform_points_around_pivot(pts=rotated_pts, trans_matrix=rotation, pivot=[0,0,0])
+        xyz = rotated_pts + np.array([-0.5, 0.0, 0.0])
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-1, -1, -1]
+
+
+        #xyz, scales, rots, opacities, features_dc, features_extra = createHalfNoise(xyz, scales, rots, opacities, 
+        #                                                                                                        features_dc, #dc
+        #                                                                                                        features_extra) #extra
+        individual_scales = [-3, -3, -3]
+        #'''
+        #######################################################################################################
+        ########### COUCH #####################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Trash can #################################################################################
+        #######################################################################################################
+        '''
+        scale = trimesh.transformations.scale_matrix(1.0, [0, 0, 0])
+        #scaled_pts = transform_points_around_pivot(pts=translated_pts, trans_matrix=scale, pivot=[0, 0, 0])
+        # TODO instead of scaling, normalize point cloud
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts) # TODO also normalize scale!! maybe don't normalize ???
+        rotation = trimesh.transformations.rotation_matrix(3.14159, [1, 0, 0], [0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=scale, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        xyz = xyz + np.array([0, 0.3, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        scales = (scales) - np.log(norm_factor)#np.repeat([[-1, -1, -1]], len(scales), axis=0)
+        individual_scales = [-1, -1, -1]
+        '''
+        #######################################################################################################
+        ########### Trash can #################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Elephant ##################################################################################
+        #######################################################################################################
+        '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        rotation = trimesh.transformations.rotation_matrix(2.79253, [1, 0, 0], [0, 0, 0])
+        #rotation2 = trimesh.transformations.rotation_matrix(3.14159, [0, 1, 0], [0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        #xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        #rots = self.customGSTransform.rotate(rots, rotation2)
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-4, -4, -4]
+        #'''
+        #######################################################################################################
+        ########### Elephant ##################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Hocker ##################################################################################
+        #######################################################################################################
+        '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        rotation = trimesh.transformations.rotation_matrix(1.5708, [1, 0, 0], [0, 0, 0]) #90 deg
+        rotation2 = trimesh.transformations.rotation_matrix(-0.640865, [0, 0, 1], [0, 0, 0]) #35 deg
+        rotation3 = trimesh.transformations.rotation_matrix(-0.698132, [0, 1, 0], [0, 0, 0]) #40 deg
+        rotation4 = trimesh.transformations.rotation_matrix(3.14159265, [0, 1, 0], [0, 0, 0]) #180 deg
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation4, pivot=[0, 0, 0])
+        #centroid = calculateCenterOfMass(xyz)
+        xyz = xyz + np.array([-0.2, 0, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        rots = self.customGSTransform.rotate(rots, rotation2)
+        rots = self.customGSTransform.rotate(rots, rotation3)
+        rots = self.customGSTransform.rotate(rots, rotation4)
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-2.5, -2.5, -2.5]
+        #xyz = xyz[:1]
+        #rots = rots[:1]
+        #scales = scales[:1]
+        #opacities = opacities[:1]
+        #features_dc = features_dc[:1]
+        #features_extra = features_extra[:1]
+        #'''
+        #######################################################################################################
+        ########### Hocker end ################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Vase ##################################################################################
+        #######################################################################################################
+        '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        rotation = trimesh.transformations.rotation_matrix(1.5708, [1, 0, 0], [0, 0, 0]) #90 deg
+        rotation2 = trimesh.transformations.rotation_matrix(-0.872665, [0, 0, 1], [0, 0, 0]) #75 deg
+        rotation3 = trimesh.transformations.rotation_matrix(1.5708, [0, 1, 0], [0, 0, 0]) #40 deg
+        #rotation4 = trimesh.transformations.rotation_matrix(3.14159265, [0, 1, 0], [0, 0, 0]) #180 deg
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
+        xyz += np.array([0, 0.2, 0])
+        #xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation4, pivot=[0, 0, 0])
+        #centroid = calculateCenterOfMass(xyz)
+        #xyz = xyz + np.array([-0.2, 0, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        rots = self.customGSTransform.rotate(rots, rotation2)
+        rots = self.customGSTransform.rotate(rots, rotation3)
+        #rots = self.customGSTransform.rotate(rots, rotation4)
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-3.0, -3.0, -3.0]
+        #xyz = xyz[:1]
+        #rots = rots[:1]
+        #scales = scales[:1]
+        #opacities = opacities[:1]
+        #features_dc = features_dc[:1]
+        #features_extra = features_extra[:1]
+        #'''
+        #######################################################################################################
+        ########### Vase end ################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Chicken ##################################################################################
+        #######################################################################################################
+        '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        rotation = trimesh.transformations.rotation_matrix(0.6, [1, 0, 0], [0, 0, 0]) #30 deg
+        rotation2 = trimesh.transformations.rotation_matrix(0.5, [0, 1, 0], [0, 0, 0]) #90 deg
+        rotation3 = trimesh.transformations.rotation_matrix(-1.408, [0, 0, 1], [0, 0, 0]) #40 deg
+        #rotation4 = trimesh.transformations.rotation_matrix(3.14159265, [0, 1, 0], [0, 0, 0]) #180 deg
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
+        #xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation4, pivot=[0, 0, 0])
+        #centroid = calculateCenterOfMass(xyz)
+        #xyz = xyz + np.array([-0.2, 0, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        rots = self.customGSTransform.rotate(rots, rotation2)
+        rots = self.customGSTransform.rotate(rots, rotation3)
+        #rots = self.customGSTransform.rotate(rots, rotation4)
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = [-4.0, -4.0, -4.0]
+        #xyz = xyz[:1]
+        #rots = rots[:1]
+        #scales = scales[:1]
+        #opacities = opacities[:1]
+        #features_dc = features_dc[:1]
+        #features_extra = features_extra[:1]
+        #'''
+        #######################################################################################################
+        ########### Chicken end ################################################################################
+        #######################################################################################################
+
+        #######################################################################################################
+        ########### Shoe ##################################################################################
+        #######################################################################################################
+        '''
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        rotation = trimesh.transformations.rotation_matrix(1.8, [1, 0, 0], [0, 0, 0]) #30 deg
+        rotation2 = trimesh.transformations.rotation_matrix(-0.75, [0, 0, 1], [0, 0, 0]) #90 deg
+        rotation3 = trimesh.transformations.rotation_matrix(0.0, [0, 1, 0], [0, 0, 0]) #40 deg
+        #rotation4 = trimesh.transformations.rotation_matrix(3.14159265, [0, 1, 0], [0, 0, 0]) #180 deg
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
+        #xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation4, pivot=[0, 0, 0])
+        #centroid = calculateCenterOfMass(xyz)
+        #xyz = xyz + np.array([-0.2, 0, 0])
+        rots = self.customGSTransform.rotate(rots, rotation)
+        rots = self.customGSTransform.rotate(rots, rotation2)
+        rots = self.customGSTransform.rotate(rots, rotation3)
+        #rots = self.customGSTransform.rotate(rots, rotation4) 
+        scales = (scales) - np.log(norm_factor)
+        individual_scales = torch.log(self.opt_object.dyn_gs_init_scale) #inverse of e function #[-3.0, -3.0, -3.0]
+        #xyz = xyz[:1]
+        #rots = rots[:1]
+        #scales = scales[:1]
+        #opacities = opacities[:1]
+        #features_dc = features_dc[:1]
+        #features_extra = features_extra[:1]
+        #'''
+        #######################################################################################################
+        ########### Shoe end ################################################################################
+        #######################################################################################################
+
+        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+        opt_rots = self.opt_object.rotation
+        rotation1 = trimesh.transformations.rotation_matrix(opt_rots[0], [1, 0, 0], [0, 0, 0])
+        rotation2 = trimesh.transformations.rotation_matrix(opt_rots[1], [0, 0, 1], [0, 0, 0])
+        rotation3 = trimesh.transformations.rotation_matrix(opt_rots[2], [0, 1, 0], [0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation1, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
+        # TODO implement translation and scaling ?
+        #### SCALING
+        opt_scale = self.opt_object.scale
+        scale_mat = trimesh.transformations.scale_matrix(opt_scale, [0, 0, 0])
+        xyz = transform_points_around_pivot(pts=xyz, trans_matrix=scale_mat, pivot=[0, 0, 0])
+        #scales *= opt_scale
+        # scale AABB as well
+        AABB = np.array(AABB) * opt_scale
+        #### TRANSLATION
+        xyz += np.array(self.opt_object.translation)
+        
+        rots = self.customGSTransform.rotate(rots, rotation1)
+        rots = self.customGSTransform.rotate(rots, rotation2)
+        rots = self.customGSTransform.rotate(rots, rotation3)
+        scales = scales - np.log(norm_factor)
+        #scales = scales / np.log(norm_factor)
+        # instead of adjusting the radius, adjust the object scale (and splat scale)
+        #scales = scales - np.log(opt_scale)
+        gs_init_scales = torch.log(torch.tensor(self.opt_object.dyn_gs_init_scale)) # inverse of e function, convert to exp format
+
+        #############################################
+        ########### Init gaussian blob ##############
+        #############################################
+        num_pts = 6000 # TODO hardcoded at the moment, not good
+        radius = 0.25
+        '''
         # init from random point cloud
-        #phis = np.random.random((num_pts,)) * 2 * np.pi
-        #costheta = np.random.random((num_pts,)) * 2 - 1
-        #thetas = np.arccos(costheta)
-        #mu = np.random.random((num_pts,))
-        #radius = radius * np.cbrt(mu)
-        #x = radius * np.sin(thetas) * np.cos(phis)
-        #y = radius * np.sin(thetas) * np.sin(phis)
-        #z = radius * np.cos(thetas)
+        phis = np.random.random((num_pts,)) * 2 * np.pi
+        costheta = np.random.random((num_pts,)) * 2 - 1
+        thetas = np.arccos(costheta)
+        mu = np.random.random((num_pts,))
+        radius = radius * np.cbrt(mu)
+        x = radius * np.sin(thetas) * np.cos(phis)
+        y = radius * np.sin(thetas) * np.sin(phis)
+        z = radius * np.cos(thetas)
         # TODO instead of sphere, do cube sampling
+        #'''
         x = np.random.uniform(low=AABB[0], high=AABB[1], size=num_pts)
         y = np.random.uniform(low=AABB[2], high=AABB[3], size=num_pts)
         z = np.random.uniform(low=AABB[4], high=AABB[5], size=num_pts)
+        #'''
         xyz_2 = np.stack((x, y, z), axis=1)
+
+        # remove big splats
+        xyz, rots, scales, opacities, features_dc, features_extra = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc, features_extra)
 
         #xyz[mask_subsampled.astype(int) == 1] = xyz_2
         xyz = np.vstack((xyz_2, xyz))
-        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy() - 1.0
+        #temp_opacities = inverse_sigmoid(0.1 * torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy()
+        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy()
+        # TODO FILTER OUT INF VALUES, and NAN ?!!
+        #opacities = inverse_sigmoid(torch.from_numpy(opacities)).cpu().numpy()
+        #opacities = opacities[~np.isinf(opacities)]
         opacities = np.vstack((temp_opacities, opacities))
-        temp_scales = np.repeat([individual_scales], len(xyz_2), axis = 0)
+        temp_scales = np.repeat([gs_init_scales], len(xyz_2), axis = 0)
         scales = np.vstack((temp_scales, scales))
         temp_rots = np.repeat([[1, 0, 0, 0]], len(xyz_2), axis = 0)
         rots = np.vstack((temp_rots, rots))
@@ -937,7 +1251,22 @@ class GaussianModel:
         self.original_scaling = torch.tensor(scales[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
         self.original_rotation = torch.tensor(rots[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
 
+    def PreprocessCloud(self, xyz, rots, scales, opacities, features_dc, features_extra):
+        avg_scale_y = np.mean(scales, axis=1)
+        avg_scale = np.mean(scales)
+        max_scale = np.max(avg_scale_y)
+        #bool_mask = np.mean(scales, axis=1) < avg_scale + 0.5 * abs(avg_scale)
+        bool_mask = np.mean(scales, axis=1) < max_scale * 1.2
+        xyz = xyz[bool_mask]
+        rots = rots[bool_mask]
+        opacities = opacities[bool_mask]
+        features_dc = features_dc[bool_mask]
+        features_extra = features_extra[bool_mask]
+        scales = scales[bool_mask]
+
         
+        return xyz, rots, scales, opacities, features_dc, features_extra
+        #todo
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -1103,6 +1432,9 @@ class GaussianModel:
 
     def prune(self, min_opacity, extent, max_screen_size):
 
+        # CUSTOM
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda") # otherwise will not include any points in the result
+
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
@@ -1169,13 +1501,13 @@ class MiniCam:
 
 class Renderer:
     # CUSTOM
-    def __init__(self, sh_degree=3, white_background=True, radius=1):
+    def __init__(self, sh_degree=3, white_background=True, radius=1, opt_object=None):
         
         self.sh_degree = sh_degree
         self.white_background = white_background
         self.radius = radius
 
-        self.gaussians = GaussianModel(sh_degree)
+        self.gaussians = GaussianModel(sh_degree, opt_object)
 
         self.bg_color = torch.tensor(
             [1, 1, 1] if white_background else [0, 0, 0],
@@ -1212,6 +1544,9 @@ class Renderer:
         else:
             # load from saved ply
             self.gaussians.load_ply(input, AABB)
+
+    def initialize_static_only(self, input=None):
+        self.gaussians.load_static_ply(input)
 
     def render(
         self,

@@ -23,6 +23,12 @@ class AABBLoss:
         
         return static_rendering["image"], dynamic_pts_rendering["image"], static_rendering["depth"], dynamic_pts_rendering["depth"], static_rendering["alpha"], dynamic_pts_rendering["alpha"]
         
+    def GSRendererStaticRendering(self, gaussians: GaussianModel, cur_cam: MiniCam, bg_color: torch.tensor):
+        # render scene 1 time, only static points with depth map
+        static_rendering = self.CustomGSRenderer.render_static(gaussians=gaussians, viewpoint_camera=cur_cam, bg_color=bg_color, render_type="static") # TODO add variable that tells whether to render static or dynamic points
+        
+        return static_rendering["image"], static_rendering["depth"], static_rendering["alpha"]
+    
     def AABBLoss(self, AABB: np.ndarray, gaussians: GaussianModel, removePoints: bool, step: int): 
         mask = gaussians.TestAgainstBB(AABB, removePoints=removePoints)
 
@@ -131,10 +137,10 @@ class AABBLoss:
             #dynamic_depth.append(depth_img)
             #static_depth.append(depth_images_2[idx])
 
-        self.write_capture_to_drive(depth_images_1, depth_images_1[0].shape[1], depth_images_1[0].shape[2], 4, r"_dynamic_depth_image")            
-        self.write_capture_to_drive(depth_images_2, depth_images_2[0].shape[1], depth_images_2[0].shape[2], 4, r"_static_depth_image")            
-        self.write_capture_to_drive(dynamic_depth, dynamic_depth[0].shape[1], dynamic_depth[0].shape[2], 4, r"_dynamic_depth")
-        self.write_capture_to_drive(static_depth, static_depth[0].shape[1], static_depth[0].shape[2], 4, r"_static_depth")
+        #self.write_capture_to_drive(depth_images_1, depth_images_1[0].shape[1], depth_images_1[0].shape[2], 4, "_dynamic_depth_image")            
+        #self.write_capture_to_drive(depth_images_2, depth_images_2[0].shape[1], depth_images_2[0].shape[2], 4, "_static_depth_image")            
+        #self.write_capture_to_drive(dynamic_depth, dynamic_depth[0].shape[1], dynamic_depth[0].shape[2], 4, "_dynamic_depth")
+        #self.write_capture_to_drive(static_depth, static_depth[0].shape[1], static_depth[0].shape[2], 4, "_static_depth")
 
         imgs_blended = images1.copy()
         for i, img in enumerate(images1):

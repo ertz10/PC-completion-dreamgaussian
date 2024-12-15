@@ -27,8 +27,9 @@ import open3d as o3d
 from customLoss import AABBLoss
 
 class GUI:
-    def __init__(self, opt):
+    def __init__(self, opt, opt_object):
         self.opt = opt  # shared with the trainer's opt to support in-place modification of rendering parameters.
+        self.opt_object = opt_object
         self.gui = opt.gui # enable gui
         self.W = opt.W
         self.H = opt.H
@@ -51,7 +52,7 @@ class GUI:
         self.enable_zero123 = False
 
         # renderer
-        self.renderer = Renderer(sh_degree=self.opt.sh_degree)
+        self.renderer = Renderer(sh_degree=self.opt.sh_degree, opt_object=self.opt_object)
         self.gaussain_scale_factor = 1
 
         # input image
@@ -79,20 +80,22 @@ class GUI:
         self.static_points_length = 0
         self.all_steps = []
 
-        self.couch_AABB = np.array([-0.0, 0.8, -0.3, 0.3, -0.25, 0.25], dtype=np.float32)
-        self.couch_captured_angles_hor = [-180, 0] # hard coded for now
-        self.trashcan_AABB = np.array([-0.15, 0.15, -0.3, 0.3, -0.15, 0.15], dtype=np.float32)
-        self.elephant_AABB = np.array([-0.3, 0.3, -0.4, 0.4, 0.25, 0.6], dtype=np.float32)
-        self.hocker_AABB = np.array([0.0, 0.4, -0.4, 0.0, -0.2, 0.2], dtype=np.float32)
-        self.vase_AABB = np.array([-0.2, 0.2, -0.5, 0.0, 0.1, 0.5], dtype=np.float32)
-        self.vase_captured_angles_hor = [-180, 0]
-        self.chicken_AABB = np.array([-0.1, 0.1, -0.3, -0.2, -0.1, 0.1], dtype=np.float32)
-        self.shoe_AABB = np.array([-0.1, 0.1, -0.2, 0.0, -0.3, 0.1], dtype=np.float32)
+        #self.couch_AABB = np.array([-0.0, 0.8, -0.3, 0.3, -0.25, 0.25], dtype=np.float32)
+        #self.couch_captured_angles_hor = [-180, 0] # hard coded for now
+        #self.trashcan_AABB = np.array([-0.15, 0.15, -0.3, 0.3, -0.15, 0.15], dtype=np.float32)
+        #self.elephant_AABB = np.array([-0.3, 0.3, -0.4, 0.4, 0.25, 0.6], dtype=np.float32)
+        #self.elephant_captured_angles_hor = [100, 180] # hard coded for now
+        #self.hocker_AABB = np.array([0.0, 0.4, -0.4, 0.0, -0.2, 0.2], dtype=np.float32)
+        #self.vase_AABB = np.array([-0.1, 0.1, -0.2, 0.0, 0.1, 0.1], dtype=np.float32)
+        #self.vase_captured_angles_hor = [90, 220]
+        #self.chicken_AABB = np.array([-0.1, 0.1, -0.3, -0.2, -0.1, 0.1], dtype=np.float32)
+        #self.chicken_captured_angles_hor = [60, 120]
+        #self.shoe_AABB = np.array([-0.1, 0.1, -0.2, 0.0, -0.3, 0.1], dtype=np.float32)
         #self.shoe_AABB = np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2], dtype=np.float32)
-        self.shoe_captured_angles_hor = [0, 130] # hard coded for now, gives the approximate angles of the best views on the static part
-        self.AABB = self.shoe_AABB
-        self.customLoss = AABBLoss(self.shoe_AABB)
-        self.captured_angles_hor = self.shoe_captured_angles_hor
+        #self.shoe_captured_angles_hor = [0, 130] # hard coded for now, gives the approximate angles of the best views on the static part
+        self.AABB = self.opt_object.AABB
+        self.customLoss = AABBLoss(self.opt_object.AABB)
+        self.captured_angles_hor = self.opt_object.visible_angles
         
         # load input data from cmdline
         if self.opt.input is not None:
@@ -141,18 +144,6 @@ class GUI:
             )
             
             self.renderer.initialize(input=pcd, AABB=self.AABB)
-            #self.renderer.initialize(input=pcd_fulluniform)
-
-            # MASK for static input points, only where mask is true will be optimized
-            #self.static_points_mask = pts_merged.copy()
-            #self.static_points_mask[0:len(pts)] = False
-            #self.static_points_mask[len(pts):] = True
-            #self.static_points_mask[0:4000] = False
-            #self.static_points_mask[4000:] = True
-            #self.static_points_mask = self.static_points_mask[:, 0]
-            #self.original_points = pts_merged.copy()
-            #self.variable_points_mask_length = len(self.static_points_mask[self.static_points_mask == True])
-            #self.static_points_length = len(self.static_points_mask[self.static_points_mask == False])
 
             #debug pcd
             pcd_debug = o3d.geometry.PointCloud()
@@ -168,8 +159,11 @@ class GUI:
             self.negative_prompt = self.opt.negative_prompt
 
         # override if provide a checkpoint
+        #if self.opt.load is not None:
+        #    self.renderer.initialize(self.opt.load, AABB=self.AABB)   
+        # CUSTOM load from object file
         if self.opt.load is not None:
-            self.renderer.initialize(self.opt.load, AABB=self.AABB)            
+            self.renderer.initialize(self.opt_object.load, AABB=self.AABB)         
         else:
             # CUSTOM CODE
             if self.opt.point_cloud is None:
@@ -310,7 +304,10 @@ class GUI:
                     img = transform(img[0])
                     figure.paste(img, (i * img_width, 0))
 
-                figure.save(r"debug/train_step_debug.jpg", "JPEG")
+                try:
+                    figure.save("debug/train_step_debug.jpg")
+                except OSError:
+                    print("Cannot save image")
 
         starter = torch.cuda.Event(enable_timing=True)
         ender = torch.cuda.Event(enable_timing=True)
@@ -327,12 +324,12 @@ class GUI:
             ##########################################################
             #xp = [0,    100,  200,  300, 450, 500,  600]
             #fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.8, 0.99]
-            xp = [0,    150,  200,  300, 400, 450,  500, 1000]
-            fp = [0.02, 0.1, 0.3,  0.4, 0.5, 0.7, 0.7, 0.9]
+            xp = [0, 200, 400, 600, 800, 1000]
+            fp = [0.02, 0.05, 0.2, 0.3, 0.8, 0.98]
             #step_ratio =  np.interp(self.step, xp, fp)
             self.all_steps = np.append(self.all_steps, step_ratio)
             ############# plot #####################
-            plt.plot(np.arange(self.step), np.ones(len(self.all_steps)) - self.all_steps)
+            #plt.plot(np.arange(self.step), np.ones(len(self.all_steps)) - self.all_steps)
             #plt.show()
             #plt.savefig(r"debug/graph_plot.png")
             ##########################################################
@@ -379,22 +376,36 @@ class GUI:
                 #if(self.step % 9 == 0):
                 #    hor = 75.0
                 #else:
-                hor = np.random.randint(-180, 180)
+                #hor = np.random.randint(-180, 180)
+                #hor = np.random.randint(0, 360)
                 #CUSTOM
-                #hor = int((360.0 / self.opt.iters) * self.step - 180.0)
-                #hor = 70.0#int((360.0 / self.opt.iters) - 180.0)
+                # TODO sample known angles more often
+                if (self.step % 3 == 0):
+                    angle1 = self.opt_object.visible_angles[0]
+                    angle2 = self.opt_object.visible_angles[1]
+                    if (angle1 > angle2): # e.g. [280, 30] going around zero 
+                        rand1 = np.random.randint(angle1, 360)
+                        rand2 = np.random.randint(0, angle2)
+                        decider = np.random.choice([0, 1])
+                        hor = rand1 - 180 if decider == 0 else rand2 - 180
+                    else:
+                        hor = int(np.random.randint(angle1, angle2) - 180.0)
+                else:
+                    hor = int((360.0 / self.opt.iters) * self.step - 180.0)
 
-                radius = -1.20#-1.25
-
-                vers.append(ver)
-                hors.append(hor)
-                radii.append(radius)
+                radius = 0.0#-1.25
 
                 # CUSTOM
                 pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
                 #pose = orbit_camera(self.opt.elevation, hor, self.opt.radius + radius)
                 #
                 poses.append(pose)
+
+                vers.append(ver) 
+                # convert hor to hor >= 0
+                hor = 180 + (180 - abs(hor)) if hor < 0 else hor
+                hors.append(hor)
+                radii.append(radius)
 
                 cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
 
@@ -432,13 +443,18 @@ class GUI:
                         #hor = np.random.randint(-180, 180)
                         #ver = np.random.randint(min_ver, max_ver)
 
-                        #if(self.step % 9 == 0):
-                        #    pose_i = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
-                        #    hors.append(hor)
-                        #else:
-                        pose_i = orbit_camera(self.opt.elevation + ver, hor + 90 * view_i, self.opt.radius + radius)
-                        hors.append(hor + 90 * view_i)
+                        # convert to (-180, 180) again
+                        hor_i = hor + 90 * view_i
+                        hor_i = hor_i if hor_i < 180 else -180 + (hor_i - 180)
+                        # modulo operator to get the actual value
+                        #hor_i = hor_i % 180
+                        #pose_i = orbit_camera(self.opt.elevation + ver, hor + 90 * view_i, self.opt.radius + radius)
+                        pose_i = orbit_camera(self.opt.elevation + ver, hor_i, self.opt.radius + radius)
+                        #hors.append(hor + 90 * view_i)
 
+                        # convert hors to hors >= 0 for convenience when comparing visibility of camera angles
+                        hor_i = 180 + (180 - abs(hor_i)) if hor_i < 0 else hor_i
+                        hors.append(hor_i)
                         poses.append(pose_i)
 
                         cur_cam_i = MiniCam(pose_i, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
@@ -487,9 +503,12 @@ class GUI:
             # guidance loss
             if self.enable_sd:
                 if self.opt.mvdream or self.opt.imagedream:
-                    loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="text", xp=xp, fp=fp) * self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
-                                                                                                                                                                            dynamic_images=dynamic_images, static_images=static_images, 
-                                                                                                                                                                            dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor)
+                    #loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="text", xp=xp, fp=fp) * self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
+                    #                                                                                                                                                        dynamic_images=dynamic_images, static_images=static_images, 
+                    #                                                                                                                                                        dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor)
+                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
+                                                                                                                                                                                dynamic_images=dynamic_images, static_images=static_images, 
+                                                                                                                                                                                dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object)
                 else:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
@@ -1167,7 +1186,11 @@ if __name__ == "__main__":
     # override default config from cli
     opt = OmegaConf.merge(OmegaConf.load(args.config), OmegaConf.from_cli(extras))
 
-    gui = GUI(opt)
+    parser.add_argument("--object_conf", required=True, help="path to the object's config file")
+    args, extras = parser.parse_known_args()
+    opt_object = OmegaConf.merge(OmegaConf.load(args.object_conf), OmegaConf.from_cli(extras))
+
+    gui = GUI(opt, opt_object)
 
     if opt.gui:
         gui.render()

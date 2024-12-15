@@ -16,8 +16,12 @@ import rembg
 
 from cam_utils import orbit_camera, OrbitCamera
 from mesh_renderer import Renderer
+from gs_renderer import Renderer as GSRenderer
+from gs_renderer import MiniCam
 
 import open3d as o3d
+
+from customLoss import AABBLoss
 
 # from kiui.lpips import LPIPS
 
@@ -47,6 +51,8 @@ class GUI:
 
         # renderer
         self.renderer = Renderer(opt).to(self.device)
+        # CUSTOM
+        self.gs_renderer = GSRenderer(sh_degree=self.opt.sh_degree)
 
         # input image
         self.input_img = None
@@ -69,10 +75,37 @@ class GUI:
 
         # CUSTOM
         self.debug_step = 0
+
+        # CUSTOM
+        self.couch_AABB = np.array([-0.0, 0.8, -0.3, 0.3, -0.25, 0.25], dtype=np.float32)
+        self.couch_captured_angles_hor = [-180, 0] # hard coded for now
+        self.trashcan_AABB = np.array([-0.15, 0.15, -0.3, 0.3, -0.15, 0.15], dtype=np.float32)
+        self.elephant_AABB = np.array([-0.3, 0.3, -0.4, 0.4, 0.25, 0.6], dtype=np.float32)
+        self.elephant_captured_angles_hor = [-180, 0] # hard coded for now
+        self.hocker_AABB = np.array([0.0, 0.4, -0.4, 0.0, -0.2, 0.2], dtype=np.float32)
+        self.vase_AABB = np.array([-0.1, 0.1, -0.4, 0.0, 0.1, 0.3], dtype=np.float32)
+        self.vase_captured_angles_hor = [-180, 0]
+        self.chicken_AABB = np.array([-0.1, 0.1, -0.3, -0.2, -0.1, 0.1], dtype=np.float32)
+        self.shoe_AABB = np.array([-0.1, 0.1, -0.2, 0.0, -0.3, 0.1], dtype=np.float32)
+        #self.shoe_AABB = np.array([-0.2, 0.2, -0.2, 0.2, -0.2, 0.2], dtype=np.float32)
+        self.shoe_captured_angles_hor = [0, 130] # hard coded for now, gives the approximate angles of the best views on the static part
+        self.AABB = self.shoe_AABB
+        self.customLoss = AABBLoss(self.shoe_AABB)
+        self.captured_angles_hor = self.shoe_captured_angles_hor
         
         # load input data from cmdline
         if self.opt.input is not None:
             self.load_input(self.opt.input)
+
+        # override if provide a checkpoint
+        if self.opt.load is not None:
+            #self.gs_renderer.initialize(self.opt.load, AABB=self.AABB)            
+            self.gs_renderer.initialize_static_only(self.opt.load)
+        else:
+            # CUSTOM CODE
+            if self.opt.point_cloud is None:
+                # initialize gaussians to a blob
+                self.gs_renderer.initialize(num_pts=self.opt.num_pts)
         
         # override prompt from cmdline
         if self.opt.prompt is not None:
@@ -210,6 +243,10 @@ class GUI:
             images = []
             poses = []
             vers, hors, radii = [], [], []
+            static_images = []
+            dynamic_images = []
+            static_depth_images = []
+            dynamic_depth_images = []
             # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
             min_ver = max(min(self.opt.min_ver, self.opt.min_ver - self.opt.elevation), -80 - self.opt.elevation)
             max_ver = min(max(self.opt.max_ver, self.opt.max_ver - self.opt.elevation), 80 - self.opt.elevation)
@@ -218,7 +255,8 @@ class GUI:
                 # render random view
                 ver = np.random.randint(min_ver, max_ver)
                 hor = np.random.randint(-180, 180)
-                radius = 0
+                # CUSTOM
+                radius = -1.20
 
                 vers.append(ver)
                 hors.append(hor)
@@ -230,6 +268,20 @@ class GUI:
                 # random render resolution
                 ssaa = min(2.0, max(0.125, 2 * np.random.random()))
                 out = self.renderer.render(pose, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa)
+
+                #CUSTOM
+                cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
+
+                ######################################################################
+                ########### dynamic, static point rendering ##########################
+                ######################################################################
+                # manually create static_points_mask
+                self.gs_renderer.gaussians.static_points_mask = torch.zeros(self.gs_renderer.gaussians.get_xyz.shape[0], requires_grad=False)
+                static_points_image, static_points_depth, static_points_alpha = self.customLoss.GSRendererStaticRendering(self.gs_renderer.gaussians, cur_cam, bg_color=None)
+                static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                static_depth_images.append(static_points_depth)
+                ######################################################################
+                ######################################################################
 
                 image = out["image"] # [H, W, 3] in [0, 1]
                 image = image.permute(2,0,1).contiguous().unsqueeze(0) # [1, 3, H, W] in [0, 1]
@@ -245,7 +297,22 @@ class GUI:
                         pose_i = orbit_camera(self.opt.elevation + ver, hor + 90 * view_i, self.opt.radius + radius)
                         poses.append(pose_i)
 
+                        hors.append(hor + 90 * view_i)
+
                         out_i = self.renderer.render(pose_i, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa)
+
+                        cur_cam_i = MiniCam(pose_i, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
+
+                        ######################################################################
+                        ########### dynamic, static point rendering ##########################
+                        ######################################################################
+                        static_points_image, static_points_depth, static_points_alpha = self.customLoss.GSRendererStaticRendering(self.gs_renderer.gaussians, cur_cam_i, bg_color=None)
+                        static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                        static_depth_images.append(static_points_depth)
+                        #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
+                        #AABBimages.append(AABBimage)
+                        ######################################################################
+                        ######################################################################  
 
                         image = out_i["image"].permute(2,0,1).contiguous().unsqueeze(0) # [1, 3, H, W] in [0, 1]
                         images.append(image)
@@ -262,7 +329,9 @@ class GUI:
             if self.enable_sd:
                 if self.opt.mvdream or self.opt.imagedream:
                     # loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, step_ratio)
-                    refined_images = self.guidance_sd.refine(images, poses, strength=strength).float()
+                    refined_images, loss = self.guidance_sd.refine(images, poses, strength=strength, customLoss=self.customLoss, static_images=static_images,
+                                                                   static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor)
+                    refined_images = refined_images.float()
                     refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
                     loss = loss + self.opt.lambda_sd * F.mse_loss(images, refined_images)
                 else:
@@ -271,12 +340,12 @@ class GUI:
                     refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
                     loss = loss + self.opt.lambda_sd * F.mse_loss(images, refined_images)
 
-            # TODO Remove when reenabling zero123 if self.enable_zero123:
-                # loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio)
-                # TODO Remove when reenabling zero123 refined_images = self.guidance_zero123.refine(images, vers, hors, radii, strength=strength, default_elevation=self.opt.elevation).float()
-                # TODO Remove when reenabling zero123 refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
-                # TODO Remove when reenabling zero123 loss = loss + self.opt.lambda_zero123 * F.mse_loss(images, refined_images)
-                # loss = loss + self.opt.lambda_zero123 * self.lpips_loss(images, refined_images)
+            if self.enable_zero123:
+                loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio)
+                refined_images = self.guidance_zero123.refine(images, vers, hors, radii, strength=strength, default_elevation=self.opt.elevation).float()
+                refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
+                loss = loss + self.opt.lambda_zero123 * F.mse_loss(images, refined_images)
+                loss = loss + self.opt.lambda_zero123 * self.lpips_loss(images, refined_images)
 
             # optimize step
             loss.backward()
