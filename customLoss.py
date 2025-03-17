@@ -15,11 +15,16 @@ class AABBLoss:
         self.AABB = AABB
         self.CustomGSRenderer = GaussianCustomRenderer()
 
-    def GSRendererDepthBlending(self, gaussians: GaussianModel, cur_cam: MiniCam, bg_color: torch.tensor):
+    def GSRendererDepthBlending(self, gaussians: GaussianModel, cur_cam: MiniCam, bg_color: torch.tensor, only_dynamic_splats: bool):
         # render scene 2 times, first static points with depth map,
         # then dynamic points with depth map
-        static_rendering = self.CustomGSRenderer.render_custom(gaussians=gaussians, viewpoint_camera=cur_cam, bg_color=bg_color, render_type="static") # TODO add variable that tells whether to render static or dynamic points
-        dynamic_pts_rendering = self.CustomGSRenderer.render_custom(gaussians=gaussians, viewpoint_camera=cur_cam, bg_color=bg_color, render_type="dynamic")
+        static_rendering = None
+        if (only_dynamic_splats == False):
+            static_rendering = self.CustomGSRenderer.render_custom(gaussians=gaussians, viewpoint_camera=cur_cam, bg_color=bg_color, render_type="static") # TODO add variable that tells whether to render static or dynamic points
+        dynamic_pts_rendering = self.CustomGSRenderer.render_custom(gaussians=gaussians, viewpoint_camera=cur_cam, bg_color=bg_color, render_type="dynamic", only_dynamic_splats=only_dynamic_splats)
+        
+        if (static_rendering == None):
+            static_rendering = dynamic_pts_rendering # TODO just for testing purposes, remove in final version
         
         return static_rendering["image"], dynamic_pts_rendering["image"], static_rendering["depth"], dynamic_pts_rendering["depth"], static_rendering["alpha"], dynamic_pts_rendering["alpha"]
         

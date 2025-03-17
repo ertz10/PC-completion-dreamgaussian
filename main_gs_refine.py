@@ -26,15 +26,16 @@ from customLoss import AABBLoss
 # from kiui.lpips import LPIPS
 
 class GUI:
-    def __init__(self, opt):
+    def __init__(self, opt, opt_object):
         self.opt = opt  # shared with the trainer's opt to support in-place modification of rendering parameters.
+        self.opt_object = opt_object
         self.gui = opt.gui # enable gui
         self.W = opt.W
         self.H = opt.H
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
 
         self.mode = "image"
-        self.seed = "random"
+        self.seed = 0#"random"
 
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         self.need_update = True  # update buffer_image
@@ -52,7 +53,7 @@ class GUI:
         # renderer
         self.renderer = Renderer(opt).to(self.device)
         # CUSTOM
-        self.gs_renderer = GSRenderer(sh_degree=self.opt.sh_degree)
+        self.gs_renderer = GSRenderer(sh_degree=self.opt.sh_degree, opt_object=self.opt_object)
 
         # input image
         self.input_img = None
@@ -100,7 +101,7 @@ class GUI:
         # override if provide a checkpoint
         if self.opt.load is not None:
             #self.gs_renderer.initialize(self.opt.load, AABB=self.AABB)            
-            self.gs_renderer.initialize_static_only(self.opt.load)
+            self.gs_renderer.initialize_static_and_dynamic(self.opt.load, self.opt.load_original)
         else:
             # CUSTOM CODE
             if self.opt.point_cloud is None:
@@ -227,7 +228,6 @@ class GUI:
             loss = 0
 
             ### known view
-            # TODO just don't load an input image
             if self.input_img_torch is not None and not self.opt.imagedream:
 
                 ssaa = min(2.0, max(0.125, 2 * np.random.random()))
@@ -256,7 +256,7 @@ class GUI:
                 ver = np.random.randint(min_ver, max_ver)
                 hor = np.random.randint(-180, 180)
                 # CUSTOM
-                radius = -1.20
+                radius = 0.0
 
                 vers.append(ver)
                 hors.append(hor)
@@ -276,19 +276,20 @@ class GUI:
                 ########### dynamic, static point rendering ##########################
                 ######################################################################
                 # manually create static_points_mask
-                self.gs_renderer.gaussians.static_points_mask = torch.zeros(self.gs_renderer.gaussians.get_xyz.shape[0], requires_grad=False)
-                static_points_image, static_points_depth, static_points_alpha = self.customLoss.GSRendererStaticRendering(self.gs_renderer.gaussians, cur_cam, bg_color=None)
-                static_images.append(torch.vstack((static_points_image, static_points_alpha)))
-                static_depth_images.append(static_points_depth)
+                with torch.no_grad():
+                    self.gs_renderer.gaussians.static_points_mask = torch.zeros(self.gs_renderer.gaussians.get_xyz.shape[0], requires_grad=False)
+                    static_points_image, static_points_depth, static_points_alpha = self.customLoss.GSRendererStaticRendering(self.gs_renderer.gaussians, cur_cam, bg_color=None)
+                    static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                    static_depth_images.append(static_points_depth)
                 ######################################################################
                 ######################################################################
 
                 image = out["image"] # [H, W, 3] in [0, 1]
                 image = image.permute(2,0,1).contiguous().unsqueeze(0) # [1, 3, H, W] in [0, 1]
                 #CUSTOM
-                if self.debug_step > 20:
-                    write_image_to_drive(image, self.step)
-                    self.debug_step = 0
+                #if self.debug_step > 2:
+                #    write_image_to_drive(image, self.step)
+                #    self.debug_step = 0
                 images.append(image)
 
                 # enable mvdream training
@@ -326,6 +327,7 @@ class GUI:
 
             # guidance loss
             strength = step_ratio * 0.15 + 0.8
+            #strength = 0.8
             if self.enable_sd:
                 if self.opt.mvdream or self.opt.imagedream:
                     # loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, step_ratio)
@@ -336,7 +338,7 @@ class GUI:
                     loss = loss + self.opt.lambda_sd * F.mse_loss(images, refined_images)
                 else:
                     # loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, step_ratio)
-                    refined_images = self.guidance_sd.refine(images, strength=strength).float()
+                    refined_images = self.guidance_sd.refine(images, strength=strength, object_params=self.opt_object).float()
                     refined_images = F.interpolate(refined_images, (render_resolution, render_resolution), mode="bilinear", align_corners=False)
                     loss = loss + self.opt.lambda_sd * F.mse_loss(images, refined_images)
 
@@ -792,7 +794,11 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Cannot find mesh from {default_path}, must specify --mesh explicitly!")
 
-    gui = GUI(opt)
+    parser.add_argument("--object_conf", required=True, help="path to the object's config file")
+    args, extras = parser.parse_known_args()
+    opt_object = OmegaConf.merge(OmegaConf.load(args.object_conf), OmegaConf.from_cli(extras))
+    
+    gui = GUI(opt, opt_object)
 
     if opt.gui:
         gui.render()

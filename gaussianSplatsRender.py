@@ -230,21 +230,31 @@ class GaussianCustomRenderer:
         override_color=None,
         compute_cov3D_python=False,
         convert_SHs_python=False,
+        only_dynamic_splats=False
     ):
         # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
         #CUSTOM
         # static_points_mask needs adjustment after densification, vstack ...
         #test = np.ones(len(gaussians.get_xyz))
         #static_points_mask = np.hstack((test, gaussians.static_points_mask[gaussians.static_points_mask == 0]))
-        static_points_mask = np.hstack((np.ones(len(gaussians.get_xyz)), gaussians.static_points_mask[gaussians.static_points_mask == 0]))
+        if(only_dynamic_splats == False):
+            static_points_mask = np.hstack((np.ones(len(gaussians.get_xyz)), gaussians.static_points_mask[gaussians.static_points_mask == 0]))
+        else:
+            static_points_mask = np.ones(len(gaussians.get_xyz))
         dynamic_gaussians = gaussians.get_xyz
         static_gaussians = gaussians.original_xyz#[static_points_mask == 0]
         active_gaussians = None
         # TODO select max and min gaussians on each axis, and append to each rendering, for static and dynamic!
-        maxima = torch.argmax(torch.vstack((dynamic_gaussians, static_gaussians)), axis=0)
-        minima = torch.argmin(torch.vstack((dynamic_gaussians, static_gaussians)), axis=0)
-        max_gaussians = torch.vstack((dynamic_gaussians, static_gaussians))[maxima]
-        min_gaussians = torch.vstack((dynamic_gaussians, static_gaussians))[minima]
+        if(only_dynamic_splats == False):
+            maxima = torch.argmax(torch.vstack((dynamic_gaussians, static_gaussians)), axis=0)
+            minima = torch.argmin(torch.vstack((dynamic_gaussians, static_gaussians)), axis=0)
+            max_gaussians = torch.vstack((dynamic_gaussians, static_gaussians))[maxima]
+            min_gaussians = torch.vstack((dynamic_gaussians, static_gaussians))[minima]
+        else:
+            maxima = torch.argmax(dynamic_gaussians, axis=0)
+            minima = torch.argmin(dynamic_gaussians, axis=0)
+            max_gaussians = dynamic_gaussians[maxima]
+            min_gaussians = dynamic_gaussians[minima]
         #TODO maybe try with static synthetically created gaussians, take corners as coordinates
         top_1 = torch.tensor((1.0, 1.0, 1.0), device='cuda')
         top_2 = torch.tensor((1.0, 1.0, -1.0), device='cuda')
@@ -309,8 +319,8 @@ class GaussianCustomRenderer:
         means3D = active_gaussians
         means2D = screenspace_points
         active_opac = None
-        min_gaussians_opac = torch.vstack((gaussians._opacity, gaussians.original_opacity))[minima]
-        max_gaussians_opac = torch.vstack((gaussians._opacity, gaussians.original_opacity))[maxima]
+        #min_gaussians_opac = torch.vstack((gaussians._opacity, gaussians.original_opacity))[minima]
+        #max_gaussians_opac = torch.vstack((gaussians._opacity, gaussians.original_opacity))[maxima]
         full_opac = torch.ones((len(gaussians._opacity), 1), device='cuda')
         if(render_type == "dynamic"):
             #active_opac = gaussians.opacity_activation(torch.vstack((gaussians._opacity, max_gaussians_opac, min_gaussians_opac)))

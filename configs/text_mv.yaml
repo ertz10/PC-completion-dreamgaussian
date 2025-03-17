@@ -35,11 +35,11 @@ warmup_rgb_loss: True
 # training batch size per iter
 batch_size: 1 # default 1
 # training iterations for stage 1
-iters: 1400
+iters: 5000
 # whether to linearly anneal timestep
 anneal_timestep: True #default True
 # training iterations for stage 2
-iters_refine: 50
+iters_refine: 2000
 # training camera radius
 radius: 2.5 #default 2.5
 # training camera fovy
@@ -64,22 +64,29 @@ W: 800
 
 ### Gaussian splatting
 num_pts: 6000
-sh_degree: 3 #default 0 
-position_lr_init: 0.001 #default 0.001 #CHANGED
-position_lr_final: 0.0000016 #default 0.00002 #0.0000016 after GradeADreamer
-position_lr_delay_mult: 0.02 # default 0.02
+sh_degree: 0 #default 0 
+position_lr_init: 0.001 #default 0.001 #CHANGED 0.00016 lucid dreamer
+position_lr_final: 0.00002 #0.000005 was good so far #default 0.00002 #0.0000016 after GradeADreamer
+position_lr_delay_mult: 0.01 # default 0.02 #0.01 lucid dreamer
 position_lr_max_steps: 300 #default 300
 feature_lr: 0.005 #default 0.01, #0.005 after GradeADreamer
+feature_lr_final: 0.003 #default 0.01, #0.003 after GradeADreamer
 opacity_lr: 0.05 #default 0.05
 scaling_lr: 0.005 #default 0.005
+scaling_lr_final: 0.005 #default 0.005
 rotation_lr: 0.001 #default 0.005, #0,001 after GradeADreamer
-percent_dense: 0.01 #default 0.01
+rotation_lr_final: 0.0002 #default 0.005, #0,001 after GradeADreamer
+percent_dense: 0.005 #0.003 #0.003 #default 0.01 , 0.003 after GradeADreamer
 density_start_iter: 0 #default 0
-density_end_iter: 3000 #default 3000
+density_end_iter: 1500 #default 3000
 #CUSTOM default 50
-densification_interval: 55 #default 50, #55 after GradeADreamer
+densification_interval: 100 #default 50, #55 after GradeADreamer
 opacity_reset_interval: 500 #default 700, #500 after GradeADreamer
-densify_grad_threshold: 0.01 #default 0.01
+opacity_reset_start_iter: 0
+densify_grad_threshold: 0.00075 #default 0.01
+
+# pcd completion
+captured_camera_angles_only_until: 500
 
 ### Textured Mesh
 geom_lr: 0.0001

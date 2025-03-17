@@ -24,6 +24,8 @@ from diffusers import DDIMScheduler
 from diffusers import StableDiffusionPipeline, StableDiffusionInpaintPipeline
 from torch import autocast
 
+import cv2
+
 class MVDream(nn.Module):
     def __init__(
         self,
@@ -52,7 +54,7 @@ class MVDream(nn.Module):
         # CUSTOM
         #self.num_train_timesteps = 1000
         #TODO
-        self.num_train_timesteps = 800
+        self.num_train_timesteps = 1000
         self.min_step = int(self.num_train_timesteps * t_range[0])
         self.max_step = int(self.num_train_timesteps * t_range[1])
         self.all_steps = []
@@ -81,6 +83,13 @@ class MVDream(nn.Module):
         neg_embeds = self.encode_text(negative_prompts).repeat(4,1,1)
         self.embeddings['pos'] = pos_embeds
         self.embeddings['neg'] = neg_embeds
+    
+    @torch.no_grad()
+    def get_inverse_text_embeds(self, uncond, inverse_text):
+        uncond_embeds = self.encode_text(uncond)
+        inverse_embeds = self.encode_text(inverse_text)
+        self.embeddings['uncond'] = uncond_embeds
+        self.embeddings['inverse_text'] = inverse_embeds
     
     def encode_text(self, prompt):
         # prompt: [str]
@@ -367,10 +376,11 @@ class MVDream(nn.Module):
     def train_step(
         self,
         pred_rgb, # [B, C, H, W], B is multiples of 4
+        timelapse_img,
         camera, # [B, 4, 4]
         customLoss,
         step_ratio=None,
-        guidance_scale=15, #8 had good results so far, without normalization
+        guidance_scale=100,
         as_latent=False,
         dynamic_images=None,
         static_images=None,
@@ -378,7 +388,8 @@ class MVDream(nn.Module):
         static_depth_images=None,
         current_cam_hors=[0, 0, 0, 0],
         captured_angles_hor=[0, 0],
-        object_params=None
+        object_params=None,
+        only_dynamic_splats=False,
     ):
         
         # CUSTOM
@@ -386,62 +397,20 @@ class MVDream(nn.Module):
 
                 import PIL.Image
 
-                img_width = input_tensor.shape[2]
-                img_height = input_tensor.shape[3]
+                img_width = input_tensor.shape[1]
+                img_height = input_tensor.shape[2]
                 # create figure
-                figure = PIL.Image.new('RGB', (img_width * 4, img_height), color=(255, 255, 255))
+                figure = PIL.Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
 
                 # add images
-                for i, img in enumerate(input_tensor):
-                    transform = T.ToPILImage()
-                    image = transform(img)
-                    figure.paste(image, (i * img_width, 0))
+                #for i, img in enumerate(input_tensor):
+                transform = T.ToPILImage()
+                image = transform(input_tensor)
+                figure.paste(image, (0, 0))
 
                 try:
                     #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
-                    figure.save(str(object_params.data_path) + "/diffModelDebug_1.jpg")
-                except OSError:
-                    print("Cannot save image")
-                
-        # CUSTOM
-        def batch_write_images_to_drive(input1, input2, input3, input4, input5, index=-1, string=""):
-
-                import PIL.Image
-
-                img_width = input1.shape[2]
-                img_height = input1.shape[3]
-                # create figure
-                figure = PIL.Image.new('RGB', (img_width * 4, img_height * 5), color=(255, 255, 255))
-                #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
-                inputs = [input1, input2, input3, input4, input5]
-
-                #inputs = F.interpolate((inputs), (512, 512), mode="bilinear", align_corners=False)
-
-                # add images
-                for i in range(0,5):
-                    for j, img in enumerate(inputs[i]):
-                        transform = T.ToPILImage()
-                        image = transform(img)
-                        figure.paste(image, (j * img_width, i * img_height))
-
-                figure2 = PIL.Image.new('RGB', (512 * 4, 512), color=(255, 255, 255))
-                if self.train_steps % 10 == 0:
-                    for j, img in enumerate(inputs[1]):
-                        img = F.interpolate(img.unsqueeze(0), (512, 512), mode="bilinear", align_corners=False)
-                        transform = T.ToPILImage()
-                        image = transform(img[0])
-                        figure2.paste(image, (j * 512, 0))
-                    self.timelapse_imgs.append(figure2)
-
-                try:
-                    #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
-                    figure.save(str(object_params.data_path) + '/diffModelDebug.jpg')
-                    if (self.train_steps == object_params.max_steps):
-                        for x in range(0, 30):
-                            self.timelapse_imgs.append(self.timelapse_imgs[len(self.timelapse_imgs) - 1])
-                        # save timelapse
-                        #self.timelapse_imgs[0].save('debug/timelapseDebug.gif', save_all=True, append_images=self.timelapse_imgs[1:], optimize=False, duration=250, loop=0)
-                        self.timelapse_imgs[0].save(str(object_params.data_path) + '/timelapseDebug.gif', save_all=True, append_images=self.timelapse_imgs[1:], optimize=False, duration=250, loop=0)
+                    figure.save(str(object_params.data_path) + "/" + str(string) + ".jpg")
                 except OSError:
                     print("Cannot save image")
 
@@ -502,16 +471,20 @@ class MVDream(nn.Module):
 
         '''
         if step_ratio is not None:
-            if self.train_steps <= 700:
+            max_linear_anneal_iters = 700
+            if self.train_steps <= max_linear_anneal_iters:
                 # dreamtime-like
-                # t = self.max_step - (self.max_step - self.min_step) * np.sqrt(step_ratio)
+                #t = self.max_step - (self.max_step - self.min_step) * np.sqrt(step_ratio)
+                step_ratio = min(1, self.train_steps / max_linear_anneal_iters) # do not use too low "t" at the beginning
                 t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
+                #t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
                 t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
-            elif self.train_steps > 700 and self.train_steps <= 900: # after gradADreamer
-                t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
-                t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
+            #elif self.train_steps > 700 and self.train_steps <= 900: # after gradADreamer
+            #    step_ratio = min(1, self.train_steps / 900)
+            #    t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
+            #    t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
                 #guidance_scale *= 1.5
-            elif self.train_steps > 900 and self.train_steps <= 1000: # after gradADreamer
+            elif self.train_steps > max_linear_anneal_iters and self.train_steps <= 1000: # after gradADreamer
                 # t ~ U(0.02, 0.98)
                 t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
                 #guidance_scale *= 2.0
@@ -562,9 +535,9 @@ class MVDream(nn.Module):
 
         with torch.no_grad():
 
-            static_region = self.retrieve_gs_depth_images(customLoss=customLoss, static_images=static_images,
-                                                          dynamic_images=dynamic_images, static_depth_images=static_depth_images,
-                                                          dynamic_depth_images=dynamic_depth_images, img_width=img_width, img_height=img_height)
+            #static_region = self.retrieve_gs_depth_images(customLoss=customLoss, static_images=static_images,
+            #                                             dynamic_images=dynamic_images, static_depth_images=static_depth_images,
+            #                                             dynamic_depth_images=dynamic_depth_images, img_width=img_width, img_height=img_height)
             
             # CHECK if first camera angle is in a "good" angle, such that we can overlay the static part completely
             current_cam_hors = torch.FloatTensor(current_cam_hors)#
@@ -588,35 +561,8 @@ class MVDream(nn.Module):
             print("valid cams shape: " + str(valid_cams))
             print("VALID CAMS: " + str(valid_cams))
             print("Current cam HORS: " + str(current_cam_hors))
-            #if (valid_cams.shape[0] != 0):
-            #    for valid_cam in valid_cams:
-                    # overlay complete static region (only for first image)
-                    # TODO remove this
-                    #valid_cams = valid_cams
-                    #latents[valid_cams][static_region[valid_cams].int().bool()] = (static_images[valid_cams] * alphas_stat[valid_cams,:3])[static_region[valid_cams,:3].int().bool()]
-                    #latents[valid_cams][static_region[valid_cams].int().bool()] = static_images[valid_cams][static_region[valid_cams].int().bool()]
-        #latents = self.encode_imgs(latents)
         
         # #################################################################
-        '''
-        latents = self.decode_latents(latents)
-        # Blended iffusion
-        if (valid_cams.shape[0] != 0):
-                for valid_cam in valid_cams:
-                    #write_images_to_drive(alphas_stat, string="_alphas")
-                    #write_images_to_drive(static_region.int().float(), string="_static_images")
-                    #if(self.train_steps % 10 == 0):
-                    #    target = target
-                    #else:
-                    #target[valid_cam][static_region[valid_cam].int().bool()] = (static_images[valid_cam] * alphas_stat[valid_cam,:3])[static_region[valid_cam,:3].int().bool()]#static_depth[0,:3]
-                    with torch.no_grad():
-                        bool_mask = static_region[valid_cam].int().bool().squeeze(0)
-                        alphas_stat = alphas_stat[:,:3]
-                        latents[valid_cam, bool_mask] = static_images[valid_cam, bool_mask] * alphas_stat[valid_cam, bool_mask]#static_depth[0,:3]
-                    #target[i][static_region[i].int().bool()] = static_images[i][static_region[i].int().bool()]#static_depth[0,:3]
-
-        latents = self.encode_imgs(latents)
-        '''
 
         camera = camera.repeat(2, 1)
         #mask_image = static_region
@@ -642,10 +588,15 @@ class MVDream(nn.Module):
             noise_pred = self.model.apply_model(latent_model_input, tt, context)
 
             # perform guidance (high scale from paper!)
-            noise_pred_uncond, noise_pred_pos = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_pos - noise_pred_uncond)
+            noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
             ###################################################################
             #'''
+            # CFG rescale copied from pipeline_stable_diffusion.py
+            if object_params.guidance_rescale > 0.0:
+                    # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+                    noise_pred = self.rescale_noise_cfg(noise_pred, noise_pred_cond, guidance_rescale=object_params.guidance_rescale)
+            #####
 
         # CUSTOM
         with_recon_loss = False
@@ -687,38 +638,65 @@ class MVDream(nn.Module):
             #noise = default(noise, lambda: torch.randn_like(x_start))
             # x_t = a * x_0 + b * e, -> inverse: x_0 = (x_t - b * e) / a, where a = (extract_into_tensor(self.model.sqrt_alphas_cumprod, t, latents_noisy.shape), b = extract_into_tensor(self.model.sqrt_one_minus_alphas_cumprod, t, latents_noisy.shape)
             # target = x_0, latents_noisy = x_t, noise_pred = e
-            target = ((latents_noisy - extract_into_tensor(self.model.sqrt_one_minus_alphas_cumprod, t, latents_noisy.shape) * noise_pred) / (extract_into_tensor(self.model.sqrt_alphas_cumprod, t, latents_noisy.shape))).detach()
+            target = (latents - grad).detach()
+            #target = ((latents_noisy - extract_into_tensor(self.model.sqrt_one_minus_alphas_cumprod, t, latents_noisy.shape) * noise_pred) / (extract_into_tensor(self.model.sqrt_alphas_cumprod, t, latents_noisy.shape))).detach()
 
             #target = self.encode_imgs(target).detach()
             #latents = self.decode_latents(latents)
             #TODO use mask as target (everything except static part)
+            #if (self.train_steps % 2 != 0):
             loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+            #else:
+            #    loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+            #    loss -= 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
             #loss = F.mse_loss(latents.float(), target, reduction='sum') * 1000.0
 
-            latents_dec = self.decode_latents(latents)
-            with torch.no_grad():
-                static_images = torch.stack((static_images)).detach()
-                static_images = F.interpolate((static_images), (img_width, img_height), mode="bilinear", align_corners=False)
-                static_images = static_images[:,:3]
-            if (valid_cams.shape[0] != 0):
-                for valid_cam in valid_cams:
-                    #if(self.train_steps % 10 == 0):
-                    #    target = target
-                    #else:
-                    #target[valid_cam][static_region[valid_cam].int().bool()] = (static_images[valid_cam] * alphas_stat[valid_cam,:3])[static_region[valid_cam,:3].int().bool()]#static_depth[0,:3]
-                    #write_images_to_drive(static_region, string="_static_region")
-                    with torch.no_grad():
-                        bool_mask = static_region[valid_cam].int().bool().squeeze(0)
-                        bool_mask = static_region[valid_cam].int().squeeze(0)
-                        bool_mask = bool_mask.cpu().numpy()
-                        #kernel = np.ones((5, 5), np.uint8) 
-                        #bool_mask = erode(bool_mask, kernel=kernel) #cv2
-                        # dilate bool mask
-                        bool_mask = torch.tensor(binary_erosion(bool_mask, iterations=5))
-                        bool_mask = bool_mask.bool()
-                    #alphas_stat = alphas_stat[:,:3]
-                    # TODO reenable
-                    loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
+            # 2ND LOSS
+            static_alpha = None
+            bool_mask_images = np.zeros((4, 3, img_height, img_width))
+            bool_mask_images = torch.tensor((bool_mask_images), dtype=torch.float32).detach()
+            if (self.train_steps % 2 == 0 and only_dynamic_splats == False):
+                #latents_dec = self.decode_latents(latents).detach()
+                latents_dec = self.decode_latents(latents) # don't use detach() here !
+                #target_dec = self.decode_latents(target).detach()
+                with torch.no_grad():
+                    static_images = torch.stack((static_images)).detach()
+                    static_images = F.interpolate((static_images), (img_width, img_height), mode="bilinear", align_corners=False)
+                    static_alpha = torch.repeat_interleave(static_images[:,3:], 3, 1)
+                    static_images = static_images[:,:3]
+                if (valid_cams.shape[0] != 0):
+                    for valid_cam in valid_cams:
+                        #if(self.train_steps % 10 == 0):
+                        #    target = target
+                        #else:
+                        #target[valid_cam][static_region[valid_cam].int().bool()] = (static_images[valid_cam] * alphas_stat[valid_cam,:3])[static_region[valid_cam,:3].int().bool()]#static_depth[0,:3]
+                        #write_images_to_drive(static_region, string="_static_region")
+                        with torch.no_grad():
+                            static_alpha = static_alpha > 0.5
+                            #static_alpha = static_region
+                            bool_mask = static_alpha[valid_cam].int()#static_region[valid_cam].int()
+                            #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
+                            #'''
+                            kernel = np.ones((3, 3), dtype=np.float32)
+                            kernel_tensor = torch.Tensor(np.expand_dims(np.expand_dims(kernel, 0), 0))
+                            bool_mask = bool_mask[:, 0].unsqueeze(0).float().cpu()
+                            #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                            #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                            #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                            #write_images_to_drive(bool_mask.squeeze(0), string="mask_eroded")
+                            bool_mask = bool_mask.squeeze(0).bool()
+                            bool_mask = torch.repeat_interleave(bool_mask, 3, 0)
+                            #bool_mask_images.append(bool_mask)
+                            bool_mask_images[valid_cam] = bool_mask.float()
+                            #'''
+                            #bool_mask = bool_mask.squeeze(0).bool()
+                        #alphas_stat = alphas_stat[:,:3]
+                        # TODO reenable
+                        #loss += 0.5 * F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / latents_dec.shape[0]
+                        loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
+                        #loss += 0.5 * F.mse_loss(pred_rgb[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / latents_dec.shape[0]
+                        #loss += 0.5 * F.mse_loss(target_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / target_dec.shape[0]
+                        #loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
 
             ############### Custom loss on features of dynamic splats to resemble existing static part #############
             #dynamic_images = latents
@@ -730,52 +708,94 @@ class MVDream(nn.Module):
             
 
         #CUSTOM
-        with torch.no_grad():
-            self.debug_step += 1
-            if self.debug_step % 1 == 0:
-                    noisy_input = self.decode_latents(latents_noisy)
-                    #gs_renders = self.decode_latents(latents)
-                    gs_renders = self.decode_latents(latents)
-                    ######TODO remove comment latent_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy_before_blended_diff, t, noise_pred_before_blended_diff)).detach().cpu()
-                    latent_output = self.decode_latents(noise_pred - noise)
-                    #blended_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))
-                    blended_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))
-                    target_debug = self.decode_latents(target)
-                    
-                    #batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, blended_output, string=r"_batch_debug")
-                    batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, static_region, string=r"_batch_debug")
-                    #write_images_to_drive(static_region, string="_static_depth_images")
-                    
-                    print("good Horizontal angles: " + str(current_cam_hors))
-                    print("guidance scale (mvdream): ", guidance_scale)
-                    print("t: ", t[0])
-                    print("num timesteps ", self.num_train_timesteps)
-                    #print(torch.cuda.memory_summary())
-                    self.debug_step = 0
+        if object_params.DEBUG and self.train_steps % object_params.DEBUG_VIS_INTERVAL == 0:
+            with torch.no_grad():
+                self.debug_step += 1
+                if self.debug_step % 1 == 0:
+                        noisy_input = self.decode_latents(latents_noisy).detach()
+                        #gs_renders = self.decode_latents(latents)
+                        gs_renders = self.decode_latents(latents).detach()
+                        ######TODO remove comment latent_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy_before_blended_diff, t, noise_pred_before_blended_diff)).detach().cpu()
+                        latent_output = self.decode_latents(noise_pred - noise).detach()
+                        #blended_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred))
+                        blended_output = self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred)).detach()
+                        target_debug = self.decode_latents(target).detach()
+                        
+                        #batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, blended_output, string=r"_batch_debug")
+                        self.batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, bool_mask_images, timelapse_img, object_params, string=r"_batch_debug")
+                        #write_images_to_drive(static_region, string="_static_depth_images")
+                        
+                        print("good Horizontal angles: " + str(current_cam_hors))
+                        print("guidance scale (mvdream): ", guidance_scale)
+                        print("t: ", t[0])
+                        print("num timesteps ", self.num_train_timesteps)
+                        #print(torch.cuda.memory_summary())
+                        self.debug_step = 0
         
 
         return loss
     
-    # # CFG RESCALING https://github.com/DSaurus/threestudio-mvdream/blob/main/guidance/mvdream_guidance.py
-    def cfg_rescale(self, latents_noisy,
-                    noise_pred_pos, #x_neg
-                    noise_pred, #x_pos
-                    t,
-                    rescale_strength = 0.7):
-        
-        # reconstruct x0
-        latents_recon = self.model.predict_start_from_noise(latents_noisy, t, noise_pred)
-        latents_recon_nocfg = self.model.predict_start_from_noise(latents_noisy, t, noise_pred_pos)
+    # copied from pipeline_stable_diffusion.py
+    def rescale_noise_cfg(self, noise_cfg, noise_pred_text, guidance_rescale=0.0):
+        """
+        Rescale `noise_cfg` according to `guidance_rescale`. Based on findings of [Common Diffusion Noise Schedules and
+        Sample Steps are Flawed](https://arxiv.org/pdf/2305.08891.pdf). See Section 3.4
+        """
+        std_text = noise_pred_text.std(dim=list(range(1, noise_pred_text.ndim)), keepdim=True)
+        std_cfg = noise_cfg.std(dim=list(range(1, noise_cfg.ndim)), keepdim=True)
+        # rescale the results from guidance (fixes overexposure)
+        noise_pred_rescaled = noise_cfg * (std_text / std_cfg)
+        # mix with the original results from guidance by factor guidance_rescale to avoid "plain looking" images
+        noise_cfg = guidance_rescale * noise_pred_rescaled + (1 - guidance_rescale) * noise_cfg
+        return noise_cfg
+    
+    # CUSTOM
+    def batch_write_images_to_drive(self, input1, input2, input3, input4, input5, timelapse_img, object_params, index=-1, string=""):
 
-        latents_recon_nocfg_reshape = latents_recon_nocfg.view(-1, 4, *latents_recon_nocfg.shape[1:]) # * unpacks values
-        latents_recon_reshape = latents_recon.view(-1, 4, *latents_recon.shape[1:])
-        sigma_nocfg = latents_recon_nocfg_reshape.std([1,2,3,4], keepdim=True) + 1e-8
-        sigma_cfg = latents_recon_reshape.std([1,2,3,4], keepdim=True) + 1e-8
-        factor = sigma_nocfg / sigma_cfg
+            import PIL.Image
 
-        latents_recon_adjust = latents_recon.clone() * factor.squeeze(1).repeat_interleave(4, dim=0)
-        # actual rescaling
-        return (rescale_strength * latents_recon_adjust) + (1.0 - rescale_strength) * latents_recon
+            img_width = input1.shape[2]
+            img_height = input1.shape[3]
+            # create figure
+            figure = PIL.Image.new('RGB', (img_width * 4, img_height * 5), color=(255, 255, 255))
+            #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
+            inputs = [input1, input2, input3, input4, input5]
+
+            #inputs = F.interpolate((inputs), (512, 512), mode="bilinear", align_corners=False)
+
+            # add images
+            for i in range(0,5):
+                for j, img in enumerate(inputs[i]):
+                    transform = T.ToPILImage()
+                    image = transform(img)
+                    figure.paste(image, (j * img_width, i * img_height))
+
+            #figure2 = PIL.Image.new('RGB', (512 * 4, 512), color=(255, 255, 255))
+            figure2 = PIL.Image.new('RGB', (1024, 1024), color=(255, 255, 255))
+            if self.train_steps % 2 == 0:
+                #for j, img in enumerate(inputs[1]):
+                #for j, img in enumerate(inputs[1]):
+                    #img = F.interpolate(img.unsqueeze(0), (512, 512), mode="bilinear", align_corners=False)
+                img = F.interpolate(timelapse_img, (1024, 1024), mode="bilinear", align_corners=False)
+                transform = T.ToPILImage()
+                image = transform(img[0])
+                figure2.paste(image, (0, 0))
+                self.timelapse_imgs.append(figure2)
+
+            try:
+                #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
+                figure.save(str(object_params.data_path) + '/diffModelDebug.jpg')
+                if (self.train_steps == object_params.max_steps):
+                    #for x in range(0, 30):
+                    #    self.timelapse_imgs.append(self.timelapse_imgs[len(self.timelapse_imgs) - 1])
+                    out = cv2.VideoWriter(str(object_params.data_path) + '/timelapse_MVDREAM_coarse.mp4', cv2.VideoWriter.fourcc(*'mp4v'), 30, (1024, 1024))
+                    #ext_frames = np.repeat(self.timelapse_imgs, 60)
+                    for frame in self.timelapse_imgs:
+                        out.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
+                    out.release()
+                    self.timelapse_imgs[0].save(str(object_params.data_path) + '/timelapseDebug_MVDREAM_coarse.gif', save_all=True, append_images=self.timelapse_imgs[1:], optimize=False, duration=250, loop=0)
+            except OSError:
+                print("Cannot save image")
          
 
     def decode_latents(self, latents):

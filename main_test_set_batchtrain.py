@@ -30,116 +30,154 @@ if __name__ == "__main__":
     #else:
     #    gui.train(opt.iters)
 
+
+    shoe = False
+    couch = False
+    vase = False
+    elephant = False
+    hocker = False
+    banana_tuna = False
+    chicken = False
+    plant = False
+    pumpkins = False
+    knife_block = False
+    rubiks_cube = False
+
+    shoe = True
+    couch = True
+    #vase = True
+    #elephant = True
+    #hocker = True
+    #banana_tuna = True
+    #chicken = True
+    #plant = True
+    #pumpkins = True
+    #knife_block = True
+    #rubiks_cube = True
+
+
+
+
+
     # test objects
     ########## SHOE ###############
     cmd = "python main.py --config configs/text_mv.yaml "
     prompt = "prompt=\"a beige winter shoe with beige shoelaces, dark brown shoe sole, natural colors\" "
     save_path = "save_path=shoe "
-    load = "load=data/shoe/shoe_cropped.ply "
     object_conf = "--object_conf=data/shoe/conf.yaml"
 
     # send command
-    command = cmd + prompt + save_path + load + object_conf
-    #s = subprocess.run(command, capture_output=True)
-    #p = Popen(command)
-    #p.communicate()
-    #print(s.stdout)
+    command = cmd + prompt + save_path + object_conf
+    if shoe:
+        p = Popen(command)
+        p.communicate()
 
     ########## COUCH ##############
     cmd = "python main.py --config configs/text_mv.yaml "
     prompt = "prompt=\"a red leather couch with three seats\" "
     save_path = "save_path=couch "
-    load = "load=data/couch_blender/couch_cropped.ply "
     object_conf = "--object_conf=data/couch_blender/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if couch:
+        p = Popen(command)
+        p.communicate()
 
     ########## VASE ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a photo of a white matte vase with a plant in it\" "
+    prompt = "prompt=\"a photo of a white matte ceramic vase with a smooth surface with a plant in it\" "
     save_path = "save_path=vase "
-    load = "load=data/vase/vase_cropped.ply "
     object_conf = "--object_conf=data/vase/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if vase:
+        p = Popen(command)
+        p.communicate()
 
     ########## ELEPHANT ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a white knitted plush elephant\" "
+    prompt = "prompt=\"a pure white knitted toy elephant\" "
     save_path = "save_path=elephant "
-    load = "load=data/elephant/elephant_cropped_v2.ply "
     object_conf = "--object_conf=data/elephant/conf.yaml"
 
-    #command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if elephant:
+        p = Popen(command)
+        p.communicate()
 
     ########## HOCKER ##############
     cmd = "python main.py --config configs/text_mv.yaml "
     prompt = "prompt=\"a photo of a square dark green footrest from ikea\" "
     save_path = "save_path=hocker "
-    load = "load=data/hocker/hocker_cropped.ply "
     object_conf = "--object_conf=data/hocker/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if hocker:
+        p = Popen(command)
+        p.communicate()
 
     ########## BANANA TUNA ##############
     cmd = "python main.py --config configs/text_mv.yaml "
     prompt = "prompt=\"two connected bananas and a tuna can next to them\" "
     save_path = "save_path=banana_tuna "
-    load = "load=data/banana_tuna/banana_tuna_cropped.ply "
     object_conf = "--object_conf=data/banana_tuna/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if banana_tuna:
+        p = Popen(command)
+        p.communicate()
 #
     ########## CHICKEN ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a photo of a brownish and white toy chicken\" "
+    prompt = "prompt=\"a photo of a brownish toy chicken\" "
     save_path = "save_path=chicken "
-    load = "load=data/chicken/chicken_cropped.ply "
     object_conf = "--object_conf=data/chicken/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if chicken:
+        p = Popen(command)
+        p.communicate()
 
     ########## PLANT ##############
     cmd = "python main.py --config configs/text_mv.yaml "
     prompt = "prompt=\"a snake plant in a beige coarsely braided pot\" "
     save_path = "save_path=plant "
-    load = "load=data/plant/plant_cropped.ply "
     object_conf = "--object_conf=data/plant/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if plant:
+        p = Popen(command)
+        p.communicate()
 
     ########## PUMPKINS ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a DLSR picture of two pumpkins\" "
+    prompt = "prompt=\"two hokkaido pumpkins placed next to each other\" "
     save_path = "save_path=pumpkins "
-    load = "load=data/pumpkins/pumpkins_cropped.ply "
     object_conf = "--object_conf=data/pumpkins/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    p = Popen(command)
-    p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if pumpkins:
+        p = Popen(command)
+        p.communicate()
 
     ########## KNIFE BLOCK ##############
     cmd = "python main.py --config configs/text_mv.yaml "
     prompt = "prompt=\"a DLSR picture a dark wooden knife block with knifes in it\" "
     save_path = "save_path=knife_block "
-    load = "load=data/knife_block/knife_block_cropped.ply "
     object_conf = "--object_conf=data/knife_block/conf.yaml"
 
-    command = cmd + prompt + save_path + load + object_conf
-    #p = Popen(command)
-    #p.communicate()
+    command = cmd + prompt + save_path + object_conf
+    if knife_block:
+        p = Popen(command)
+        p.communicate()
+
+    ########## RUBIKS CUBE ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a rubiks cube\" "
+    save_path = "save_path=rubiks_cube "
+    object_conf = "--object_conf=data/rubiks_cube/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if rubiks_cube:
+        p = Popen(command)
+        p.communicate()

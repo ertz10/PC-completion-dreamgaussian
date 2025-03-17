@@ -15,7 +15,9 @@ from PIL import Image
 import rembg
 
 from cam_utils import orbit_camera, OrbitCamera
-from gs_renderer import Renderer, MiniCam, BasicPointCloud, SH2RGB
+from mesh_renderer import Renderer
+from gs_renderer import Renderer as GSRenderer
+from gs_renderer import MiniCam, BasicPointCloud, SH2RGB
 
 from grid_put import mipmap_linear_grid_put_2d
 from mesh import Mesh, safe_normalize
@@ -52,7 +54,9 @@ class GUI:
         self.enable_zero123 = False
 
         # renderer
-        self.renderer = Renderer(sh_degree=self.opt.sh_degree, opt_object=self.opt_object)
+        self.renderer = Renderer(opt).to(self.device)
+        # renderer
+        self.gs_renderer = GSRenderer(sh_degree=self.opt.sh_degree, opt_object=self.opt_object)
         self.gaussain_scale_factor = 1
 
         # input image
@@ -162,13 +166,14 @@ class GUI:
         #if self.opt.load is not None:
         #    self.renderer.initialize(self.opt.load, AABB=self.AABB)   
         # CUSTOM load from object file
-        if self.opt_object.load is not None:
-            self.renderer.initialize(self.opt_object.load, num_pts=self.opt_object.num_pts_init, AABB=self.AABB, spatial_lr_scale=self.opt_object.position_lr_factor)         
+        if self.opt.load is not None:
+            #self.renderer.initialize(self.opt_object.load, AABB=self.AABB)  
+            self.gs_renderer.initialize_static_and_dynamic(self.opt.load, self.opt.load_original)
         else:
             # CUSTOM CODE
             if self.opt.point_cloud is None:
                 # initialize gaussians to a blob
-                self.renderer.initialize(num_pts=self.opt_object.num_pts_init)
+                self.gs_renderer.initialize(num_pts=self.opt.num_pts)
 
         if self.gui:
             dpg.create_context()
@@ -204,10 +209,12 @@ class GUI:
         #self.renderer.gaussians.variable_points_length = self.variable_points_mask_length
         #self.renderer.gaussians.static_points_length = self.static_points_length
         #self.renderer.gaussians.original_points = self.original_points
-        self.renderer.gaussians.training_setup(self.opt)
+
+        #self.gs_renderer.gaussians.training_setup(self.opt)
         # do not do progressive sh-level
-        self.renderer.gaussians.active_sh_degree = self.renderer.gaussians.max_sh_degree
-        self.optimizer = self.renderer.gaussians.optimizer
+        self.gs_renderer.gaussians.active_sh_degree = self.gs_renderer.gaussians.max_sh_degree
+        #self.optimizer = self.gs_renderer.gaussians.optimizer
+        self.optimizer = torch.optim.Adam(self.renderer.get_params())
 
         # default camera
         if self.opt.mvdream or self.opt.imagedream:
@@ -243,7 +250,7 @@ class GUI:
             else:
                 print(f"[INFO] loading SD...")
                 from guidance.sd_utils import StableDiffusion
-                self.guidance_sd = StableDiffusion(self.device, fp16=True, t_range=self.opt_object.t_range)
+                self.guidance_sd = StableDiffusion(self.device, t_range=self.opt_object.t_range)
                 print(f"[INFO] loaded SD!")
 
         if self.guidance_zero123 is None and self.enable_zero123:
@@ -271,8 +278,6 @@ class GUI:
                     self.guidance_sd.get_image_text_embeds(self.input_img_torch, [self.prompt], [self.negative_prompt])
                 else:
                     self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
-                    # Lucid dreamer custom (uncond, inverse_text) = (negative_prompt, inverse_text='')
-                    self.guidance_sd.get_inverse_text_embeds([self.negative_prompt], [self.opt_object.inverse_text])
 
             if self.enable_zero123:
                 self.guidance_zero123.get_img_embeds(self.input_img_torch)
@@ -318,9 +323,9 @@ class GUI:
         for _ in range(self.train_steps):
             # CUSTOM
             self.debug_step += 1
-
             self.step += 1
-            step_ratio = min(1, self.step / self.opt.iters)
+            #step_ratio = min(1, self.step / self.opt.iters)
+            step_ratio = min(1, self.step / self.opt_object.max_steps_tex_refine)
             ############ CUSTOM ######################################
             ## Increase step ratio, this is used by mvdream as well ##
             ##########################################################
@@ -337,12 +342,10 @@ class GUI:
             ##########################################################
 
             # update lr
-            self.renderer.gaussians.update_learning_rate(self.step)
-            self.renderer.gaussians.update_feature_learning_rate(self.step)
-            self.renderer.gaussians.update_rotation_learning_rate(self.step)
-            self.renderer.gaussians.update_scaling_learning_rate(self.step)
-            #if self.step % 500 == 0:
-            #    self.renderer.gaussians.oneupSHdegree()
+            #self.gs_renderer.gaussians.update_learning_rate(self.step)
+            #self.renderer.gaussians.update_feature_learning_rate(self.step)
+            #self.renderer.gaussians.update_rotation_learning_rate(self.step)
+            #self.renderer.gaussians.update_scaling_learning_rate(self.step)
 
             loss = 0
 
@@ -361,8 +364,8 @@ class GUI:
                 #loss = loss + 1000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(mask, self.input_mask_torch)
 
             ### novel view (manual batch)
-            #render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
-            render_resolution = self.opt_object.mv_dream_render_res#128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512) #self.opt_object.mv_dream_render_res#
+            #render_resolution = 512 if step_ratio < 0.3 else (512 if step_ratio < 0.6 else 512)
+            render_resolution = 512 #if step_ratio < 0.3 else (512 if step_ratio < 0.6 else 512)
             images = []
             AABBimages = []
             static_images = []
@@ -375,7 +378,7 @@ class GUI:
             min_ver = max(min(self.opt.min_ver, self.opt.min_ver - self.opt.elevation), -80 - self.opt.elevation)
             max_ver = min(max(self.opt.max_ver, self.opt.max_ver - self.opt.elevation), 80 - self.opt.elevation)
 
-            for _ in range(self.opt.batch_size):
+            for _ in range(self.opt_object.batch_size_tex_refine):
 
                 # render random view
                 # CUSTOM maybe use not random but fixed angles per view ?
@@ -388,7 +391,8 @@ class GUI:
                 #hor = np.random.randint(0, 360)
                 #CUSTOM
                 # TODO sample known angles more often
-                if (self.step <= self.opt.captured_camera_angles_only_until or (self.step % 3 == 0 and self.opt_object.only_dynamic_splats == False)):
+                # TODO compute angle such that camera angle starts from 0, not 180!
+                if (self.step % 3 == 0 and self.opt.only_dynamic_splats == False):
                     angle1 = self.opt_object.visible_angles[0]
                     angle2 = self.opt_object.visible_angles[1]
                     if (angle1 > angle2): # e.g. [280, 30] going around zero 
@@ -405,20 +409,15 @@ class GUI:
                     #hor = int((360.0 / self.opt.iters) * self.step)
                     hor = np.random.randint(0, 360)
 
-                radius = 0.0#-1.25
+                radius = 0.5#-1.25
 
                 # CUSTOM
                 pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
-                # TODO maybe change hor to -180 to 180 for pose only ?
-                #pose = orbit_camera(self.opt.elevation + ver, hor - 180, self.opt.radius + radius)
-                #pose = orbit_camera(self.opt.elevation, hor, self.opt.radius + radius)
-                #
                 poses.append(pose)
 
                 vers.append(ver) 
-                # convert hor to hor 0 <= hor <= 360
-                #############hor = 180 + (180 - abs(hor)) if hor < 0 else hor
-                #hor = hor - 360 if hor > 360 else hor
+                # convert hor to hor >= 0
+                #hor = 180 + (180 - abs(hor)) if hor < 0 else hor
                 hors.append(hor)
                 radii.append(radius)
 
@@ -427,37 +426,29 @@ class GUI:
                 bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
                 # Custom
                 out = None
-                #if (self.step == 500):
-                #    out = self.renderer.render(cur_cam, bg_color=bg_color)
-                #else:
-                    # ONLY FOR DEBUG PURPOSE TODO remove in final version
-                out = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
-                
+                ssaa = min(2.0, max(0.125, 2 * np.random.random()))
+                out = self.renderer.render(pose, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa)
+
                 # DEBUG render
                 ##############
                 pose_debug = orbit_camera(self.opt_object.reference_angle_v, int((360.0 / self.opt.iters) * self.step * 2.0), self.opt.radius + radius)
                 cur_cam_debug = MiniCam(pose_debug, 1024, 1024, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
-                out_debug = self.renderer.render(cur_cam_debug, bg_color=torch.tensor([1,1,1], dtype=torch.float32, device='cuda'), only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                out_debug = self.gs_renderer.render(cur_cam_debug, bg_color=torch.tensor([1,1,1], dtype=torch.float32, device='cuda'), only_dynamic_splats=self.opt.only_dynamic_splats)
                 ##############
                 # DEBUG render end
 
-                #CUSTOM render Bounding Box to image
-                #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam, self.opt.radius + radius)
-                #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
-                #AABBimages.append(AABBimage)
                 ######################################################################
                 ########### dynamic, static point rendering ##########################
                 ######################################################################
-                with torch.no_grad():
-                    static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
-                    static_images.append(torch.vstack((static_points_image, static_points_alpha)))
-                    dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
-                    static_depth_images.append(static_points_depth)
-                    dynamic_depth_images.append(dynamic_points_depth)
+                static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.gs_renderer.gaussians, cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt.only_dynamic_splats)
+                static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
+                static_depth_images.append(static_points_depth)
+                dynamic_depth_images.append(dynamic_points_depth)
                 ######################################################################
                 ######################################################################
 
-                image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
+                image = out["image"].permute(2,0,1).contiguous().unsqueeze(0)#image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
                 images.append(image)
 
                 # enable mvdream training
@@ -468,22 +459,20 @@ class GUI:
                         #ver = np.random.randint(min_ver, max_ver)
 
                         # convert to (-180, 180) again
-                        #if (self.step % 3 == 0):
+                        if (self.step % 3 == 0):
                             # same angle as first image
-                        #    hor_i = hor
-                        #else:
-                        hor_i = hor + 90 * view_i
-                        #hor_i = hor_i if hor_i < 180 else -180 + (hor_i - 180)
-                        hor_i = hor_i - 360 if hor_i > 360 else hor_i
+                            hor_i = hor
+                        else:
+                            hor_i = hor + 90 * view_i
+                            #hor_i = hor_i if hor_i < 180 else -180 + (hor_i - 180)
+                            hor_i = hor_i - 360 if hor_i > 360 else hor_i
                         # modulo operator to get the actual value
                         #hor_i = hor_i % 180
                         #pose_i = orbit_camera(self.opt.elevation + ver, hor + 90 * view_i, self.opt.radius + radius)
                         pose_i = orbit_camera(self.opt.elevation + ver, hor_i, self.opt.radius + radius)
-                        # TODO change hor_i to -180 180 for pose_i only!
-                        #pose_i = orbit_camera(self.opt.elevation + ver, hor_i - 180, self.opt.radius + radius)
                         #hors.append(hor + 90 * view_i)
 
-                        #hor_i = hor_i - 360 if hor_i > 360 else hor_i
+                        #hor_i = 180 + (180 - abs(hor_i)) if hor_i < 0 else hor_i
                         hors.append(hor_i)
                         poses.append(pose_i)
 
@@ -494,24 +483,25 @@ class GUI:
                         #    out_i = self.renderer.render(cur_cam_i, bg_color=bg_color)
                         #else:
                             # ONLY FOR DEBUG PURPOSE TODO remove in final version
-                        out_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                        out_i = self.renderer.render(pose_i, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa)
 
                         #CUSTOM render Bounding Box to image
                         #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam_i, self.opt.radius + radius)
                         ######################################################################
                         ########### dynamic, static point rendering ##########################
                         ######################################################################
-                        static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
-                        static_images.append(torch.vstack((static_points_image, static_points_alpha)))
-                        dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
-                        static_depth_images.append(static_points_depth)
-                        dynamic_depth_images.append(dynamic_points_depth)
+                        with torch.no_grad():
+                            static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.gs_renderer.gaussians, cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt.only_dynamic_splats)
+                            static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                            dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
+                            static_depth_images.append(static_points_depth)
+                            dynamic_depth_images.append(dynamic_points_depth)
                         #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
                         #AABBimages.append(AABBimage)
                         ######################################################################
                         ######################################################################      
 
-                        image = out_i["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
+                        image = out_i["image"].permute(2,0,1).contiguous().unsqueeze(0) # [1, 3, H, W] in [0, 1]
                         images.append(image)
 
                 # CUSTOM
@@ -519,9 +509,9 @@ class GUI:
                 # Debug: TODO maybe remove later
                 #images_blended = self.customLoss.blend_images(AABBimages, images)
 
-                if self.debug_step % 1 == 0:
-                    write_images_to_drive(images, 0)
-                    self.debug_step = 0
+                #if self.debug_step % 1 == 0:
+                #    write_images_to_drive(images, 0)
+                #    self.debug_step = 0
 
             images = torch.cat(images, dim=0)
             poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)
@@ -536,17 +526,13 @@ class GUI:
                     #loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="text", xp=xp, fp=fp) * self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                     #                                                                                                                                                        dynamic_images=dynamic_images, static_images=static_images, 
                     #                                                                                                                                                        dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor)
-                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), poses, self.customLoss, guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
+                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
-                                                                                                                                                                                dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
-                                                                                                                                                                                current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, 
-                                                                                                                                                                                only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                                                                                                                                                                                dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, only_dynamic_splats=self.opt.only_dynamic_splats, tex_refine=True)
                 else:
-                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, customLoss=self.customLoss,
-                                                                                                                                                                                dynamic_images=dynamic_images, static_images=static_images, 
-                                                                                                                                                                                dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
-                                                                                                                                                                                current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, 
-                                                                                                                                                                                only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), step_ratio=step_ratio if self.opt.anneal_timestep else None, customLoss=self.customLoss,
+                                                                                                                                                        dynamic_images=dynamic_images, static_images=static_images,
+                                                                                                                                                        dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, only_dynamic_splats=self.opt.only_dynamic_splats, tex_refine=True)
 
             #if self.enable_zero123:
                 #loss = loss + 0.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="image", xp=xp, fp=fp) * self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, self.input_img_torch, vers, hors, radii, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation, 
@@ -570,16 +556,13 @@ class GUI:
             self.optimizer.step()
             self.optimizer.zero_grad()
 
-            print("Number of static gaussians: " + str(len(self.renderer.gaussians.original_xyz)))
-            print("Number of dynamic gaussians: " + str(len(self.renderer.gaussians.get_xyz)))
-            print("Loss: " + str(loss))
-
             # densify and prune
+            '''
             if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
                 #CUSTOM .to("cpu")
                 viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"].to("cuda"), out["radii"]
                 #CUSTOM
-                if (self.opt_object.only_dynamic_splats == False):
+                if (self.opt.only_dynamic_splats == False):
                     length = len(viewspace_point_tensor) - len(self.renderer.gaussians.original_xyz)#len(self.renderer.gaussians.static_points_mask[self.renderer.gaussians.static_points_mask == 0])
                 else:
                     length = len(viewspace_point_tensor)
@@ -588,13 +571,14 @@ class GUI:
                 visibility_filter_temp = visibility_filter[0:length]
                 radii_temp = radii[0:length]
                 self.renderer.gaussians.max_radii2D[visibility_filter_temp] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter_temp], radii_temp[visibility_filter_temp])
-                self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, self.opt_object.only_dynamic_splats)
+                self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, self.opt.only_dynamic_splats)
 
                 if self.step % self.opt.densification_interval == 0:
                     self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
                 
-                if self.step % self.opt.opacity_reset_interval == 0 and self.step > self.opt.opacity_reset_start_iter:
+                if self.step % self.opt.opacity_reset_interval == 0:
                     self.renderer.gaussians.reset_opacity()
+            '''
 
         ender.record()
         torch.cuda.synchronize()
@@ -760,7 +744,7 @@ class GUI:
                     self.cam.far,
                 )
                 
-                cur_out = self.renderer.render(cur_cam, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                cur_out = self.renderer.render(cur_cam)
 
                 rgbs = cur_out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
 
@@ -848,8 +832,8 @@ class GUI:
 
         else:
             #path = os.path.join(self.opt.outdir, self.opt.save_path + '_model' + str(index) + '.ply')
-            path = os.path.join(self.opt.outdir, self.opt.save_path + '_model.ply')
-            self.renderer.gaussians.save_ply(path)
+            path = os.path.join(self.opt.outdir, self.opt.save_path + '_tex_refine_model.ply')
+            self.gs_renderer.gaussians.save_ply(path)
 
         print(f"[INFO] save model to {path}.")
 
@@ -1210,7 +1194,7 @@ class GUI:
                     pc_index = 0
                 pc_index += 1
             # do a last prune
-            self.renderer.gaussians.prune(min_opacity=0.01, extent=1, max_screen_size=1)
+            self.gs_renderer.gaussians.prune(min_opacity=0.01, extent=1, max_screen_size=1)
         # save
         self.save_model(mode='model')
         self.save_model(mode='geo+tex')
@@ -1229,6 +1213,14 @@ if __name__ == "__main__":
     # override default config from cli
     opt = OmegaConf.merge(OmegaConf.load(args.config), OmegaConf.from_cli(extras))
 
+    # auto find mesh from stage 1
+    if opt.mesh is None:
+        default_path = os.path.join(opt.outdir, opt.save_path + '_mesh.' + opt.mesh_format)
+        if os.path.exists(default_path):
+            opt.mesh = default_path
+        else:
+            raise ValueError(f"Cannot find mesh from {default_path}, must specify --mesh explicitly!")
+
     parser.add_argument("--object_conf", required=True, help="path to the object's config file")
     args, extras = parser.parse_known_args()
     opt_object = OmegaConf.merge(OmegaConf.load(args.object_conf), OmegaConf.from_cli(extras))
@@ -1238,4 +1230,4 @@ if __name__ == "__main__":
     if opt.gui:
         gui.render()
     else:
-        gui.train(opt_object.max_steps)
+        gui.train(opt_object.max_steps_tex_refine)
