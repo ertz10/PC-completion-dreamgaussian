@@ -449,11 +449,12 @@ class GUI:
                 ######################################################################
                 ########### dynamic, static point rendering ##########################
                 ######################################################################
-                static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt.only_dynamic_splats)
-                static_images.append(torch.vstack((static_points_image, static_points_alpha)))
-                dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
-                static_depth_images.append(static_points_depth)
-                dynamic_depth_images.append(dynamic_points_depth)
+                with torch.no_grad():
+                    static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt.only_dynamic_splats)
+                    static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+                    dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
+                    static_depth_images.append(static_points_depth)
+                    dynamic_depth_images.append(dynamic_points_depth)
                 ######################################################################
                 ######################################################################
 

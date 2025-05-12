@@ -42,18 +42,27 @@ if __name__ == "__main__":
     pumpkins = False
     knife_block = False
     rubiks_cube = False
+    headset = False
+    tennis_ball = False
+    flashlight = False
+    leather_book = False
 
-    shoe = True
-    couch = True
+    
+    #shoe = True
+    #couch = True
     #vase = True
     #elephant = True
     #hocker = True
     #banana_tuna = True
-    #chicken = True
+    #chicken = True # try again later, seems to build too many splats over time, reduce!
     #plant = True
     #pumpkins = True
     #knife_block = True
     #rubiks_cube = True
+    headset = True
+    tennis_ball = True
+    flashlight = True
+    leather_book = True
 
 
 
@@ -96,7 +105,7 @@ if __name__ == "__main__":
 
     ########## ELEPHANT ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a pure white knitted toy elephant\" "
+    prompt = "prompt=\"a pure white knitted toy elephant with two ears\" "
     save_path = "save_path=elephant "
     object_conf = "--object_conf=data/elephant/conf.yaml"
 
@@ -173,11 +182,55 @@ if __name__ == "__main__":
 
     ########## RUBIKS CUBE ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a rubiks cube\" "
+    prompt = "prompt=\"a rubiks cube with random colors on each side\" "
     save_path = "save_path=rubiks_cube "
     object_conf = "--object_conf=data/rubiks_cube/conf.yaml"
 
     command = cmd + prompt + save_path + object_conf
     if rubiks_cube:
+        p = Popen(command)
+        p.communicate()
+
+    ########## HEADSET ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a black computer headset with microphone\" "
+    save_path = "save_path=headset "
+    object_conf = "--object_conf=data/headset/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if headset:
+        p = Popen(command)
+        p.communicate()
+
+    ########## TENNIS BALL ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a photo of a tennis ball\" "
+    save_path = "save_path=tennis_ball "
+    object_conf = "--object_conf=data/tennis_ball/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if tennis_ball:
+        p = Popen(command)
+        p.communicate()
+
+    ########## FLASHLIGHT ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a flashlight with a black and silver casing\" "
+    save_path = "save_path=flashlight "
+    object_conf = "--object_conf=data/flashlight/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if flashlight:
+        p = Popen(command)
+        p.communicate()
+
+    ########## LEATHER BOOK ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a book with a red leather cover with ornaments\" "
+    save_path = "save_path=leather_book "
+    object_conf = "--object_conf=data/leather_book/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if flashlight:
         p = Popen(command)
         p.communicate()

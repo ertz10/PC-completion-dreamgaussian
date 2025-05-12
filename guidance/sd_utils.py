@@ -460,7 +460,7 @@ class StableDiffusion(nn.Module):
                     t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
             else:
                 if step_ratio is not None:
-                    max_linear_anneal_iters = 700
+                    max_linear_anneal_iters = 0
                     if self.train_steps <= max_linear_anneal_iters:
                         # dreamtime-like
                         # t = self.max_step - (self.max_step - self.min_step) * np.sqrt(step_ratio)
@@ -472,9 +472,9 @@ class StableDiffusion(nn.Module):
                     #    t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
                     #    t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
                         #guidance_scale *= 1.5
-                    elif self.train_steps > max_linear_anneal_iters and self.train_steps <= 1000: # after gradADreamer
+                    #elif self.train_steps > max_linear_anneal_iters and self.train_steps <= 1000: # after gradADreamer
                         # t ~ U(0.02, 0.98)
-                        t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
+                    #    t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
                         #guidance_scale *= 2.0
                     else:
                         # t ~ U(0.02, 0.50) # after gradADreamer
@@ -624,7 +624,7 @@ class StableDiffusion(nn.Module):
         loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
         #loss = SpecifyGradient.apply(latents, grad)
 
-        if (only_dynamic_splats == False):
+        if (self.train_steps % 2 == 0 and only_dynamic_splats == False):
             latents_dec = self.decode_latents(latents)
             with torch.no_grad():
                 static_images = torch.stack((static_images)).detach()
@@ -651,17 +651,17 @@ class StableDiffusion(nn.Module):
                         kernel_tensor = torch.Tensor(np.expand_dims(np.expand_dims(kernel, 0), 0))
                         bool_mask = bool_mask[:, 0].unsqueeze(0).float().cpu()
                         bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
-                        bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
-                        bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                        #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                        #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
                         #write_images_to_drive(bool_mask.squeeze(0), string="mask_eroded")
                         bool_mask = bool_mask.squeeze(0).bool()
                         bool_mask = torch.repeat_interleave(bool_mask, 3, 0)
                     #alphas_stat = alphas_stat[:,:3]
                     # TODO reenable
-                    #loss += F.mse_loss(latents_dec[valid_cam, bool_mask].float(), static_images[valid_cam, bool_mask], reduction='sum')
+                    loss += F.mse_loss(latents_dec[valid_cam, bool_mask].float(), static_images[valid_cam, bool_mask], reduction='sum')
 
         #CUSTOM
-        if object_params.DEBUG:
+        if object_params.DEBUG and self.train_steps % object_params.DEBUG_VIS_INTERVAL == 0:
             with torch.no_grad():
                 self.debug_step += 1
                 if self.debug_step % 1 == 0:

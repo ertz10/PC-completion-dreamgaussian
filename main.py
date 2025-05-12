@@ -438,6 +438,10 @@ class GUI:
                 pose_debug = orbit_camera(self.opt_object.reference_angle_v, int((360.0 / self.opt.iters) * self.step * 2.0), self.opt.radius + radius)
                 cur_cam_debug = MiniCam(pose_debug, 1024, 1024, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
                 out_debug = self.renderer.render(cur_cam_debug, bg_color=torch.tensor([1,1,1], dtype=torch.float32, device='cuda'), only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                # colorize static and dynamic gaussians
+                static_color = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device="cuda")
+                dynamic_color = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device="cuda")
+                out_debug_col = self.renderer.render(cur_cam_debug, bg_color=torch.tensor([1,1,1], dtype=torch.float32, device='cuda'), static_color=static_color, dynamic_color=dynamic_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
                 ##############
                 # DEBUG render end
 
@@ -536,7 +540,7 @@ class GUI:
                     #loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="text", xp=xp, fp=fp) * self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                     #                                                                                                                                                        dynamic_images=dynamic_images, static_images=static_images, 
                     #                                                                                                                                                        dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor)
-                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), poses, self.customLoss, guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
+                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), out_debug_col["image"].unsqueeze(0), poses, self.customLoss, guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
                                                                                                                                                                                 dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
                                                                                                                                                                                 current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, 
@@ -591,6 +595,7 @@ class GUI:
                 self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter, self.opt_object.only_dynamic_splats)
 
                 if self.step % self.opt.densification_interval == 0:
+                    #self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.005, extent=4, max_screen_size=1)
                     self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
                 
                 if self.step % self.opt.opacity_reset_interval == 0 and self.step > self.opt.opacity_reset_start_iter:

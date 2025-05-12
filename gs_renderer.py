@@ -542,6 +542,7 @@ class GaussianModel:
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        #opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.1)) #original
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
@@ -839,7 +840,8 @@ class GaussianModel:
         xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=scale_mat, pivot=[0, 0, 0])
         #scales *= opt_scale
         # scale AABB as well
-        AABB = np.array(AABB) * opt_scale
+        if self.opt_object.AABB is not None:
+            AABB = np.array(AABB) * opt_scale
         #### TRANSLATION
         xyz += np.array(self.opt_object.translation)
         
@@ -861,32 +863,58 @@ class GaussianModel:
         ########### Init gaussian blob ##############
         #############################################
         num_pts = self.opt_object.num_pts_init # TODO hardcoded at the moment, not good
-        radius = 0.25
-        '''
-        # init from random point cloud
-        phis = np.random.random((num_pts,)) * 2 * np.pi
-        costheta = np.random.random((num_pts,)) * 2 - 1
-        thetas = np.arccos(costheta)
-        mu = np.random.random((num_pts,))
-        radius = radius * np.cbrt(mu)
-        x = radius * np.sin(thetas) * np.cos(phis)
-        y = radius * np.sin(thetas) * np.sin(phis)
-        z = radius * np.cos(thetas)
-        # TODO instead of sphere, do cube sampling
-        #'''
-        x = np.random.uniform(low=AABB[0], high=AABB[1], size=num_pts)
-        y = np.random.uniform(low=AABB[2], high=AABB[3], size=num_pts)
-        z = np.random.uniform(low=AABB[4], high=AABB[5], size=num_pts)
-        #'''
-        xyz_2 = np.stack((x, y, z), axis=1)
+
+        if self.opt_object.init_sphere_radius is not None:
+            radius = self.opt_object.init_sphere_radius
+        else:
+            radius = 0.75       
 
         # remove big splats
         xyz, rots, scales, opacities, features_dc, features_extra = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc, features_extra)
 
+        if self.opt_object.AABB is None:
+            # radius depending on bounding box of object
+            delta_x = np.abs(np.max(xyz[0])) + np.abs(np.min(xyz[0]))
+            delta_y = np.abs(np.max(xyz[1])) + np.abs(np.min(xyz[1]))
+            delta_z = np.abs(np.max(xyz[2])) + np.abs(np.min(xyz[2]))
+            radius = np.max(np.array([delta_x, delta_y, delta_z]))# / 2.0
+
+            # init from random point cloud
+            #'''
+            phis = np.random.random((num_pts,)) * 2 * np.pi
+            costheta = np.random.random((num_pts,)) * 2 - 1
+            thetas = np.arccos(costheta)
+            mu = np.random.random((num_pts,))
+            radius = radius * np.cbrt(mu)
+            x = radius * np.sin(thetas) * np.cos(phis)
+            y = radius * np.sin(thetas) * np.sin(phis)
+            z = radius * np.cos(thetas)
+            '''
+            # use bounding box of object
+            x_min = np.min(xyz[0]) * 2.0
+            x_max = np.max(xyz[0]) * 2.0
+            y_min = np.min(xyz[1]) * 2.0
+            y_max = np.max(xyz[1]) * 2.0
+            z_min = np.min(xyz[2]) * 2.0
+            z_max = np.max(xyz[2]) * 2.0
+            x = np.random.uniform(low=x_min, high=x_max, size=num_pts)
+            y = np.random.uniform(low=y_min, high=y_max, size=num_pts)
+            z = np.random.uniform(low=z_min, high=z_max, size=num_pts)
+            '''
+        else:
+            # TODO instead of sphere, do cube sampling
+            #'''
+            x = np.random.uniform(low=AABB[0], high=AABB[1], size=num_pts)
+            y = np.random.uniform(low=AABB[2], high=AABB[3], size=num_pts)
+            z = np.random.uniform(low=AABB[4], high=AABB[5], size=num_pts)
+            #'''
+        xyz_2 = np.stack((x, y, z), axis=1)
+
         #xyz[mask_subsampled.astype(int) == 1] = xyz_2
         xyz = np.vstack((xyz_2, xyz))
         #temp_opacities = inverse_sigmoid(0.1 * torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy()
-        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy()
+        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.01).cpu().numpy()
+        #temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.25).cpu().numpy()
         # TODO FILTER OUT INF VALUES, and NAN ?!!
         #opacities = inverse_sigmoid(torch.from_numpy(opacities)).cpu().numpy()
         #opacities = opacities[~np.isinf(opacities)]
@@ -967,7 +995,9 @@ class GaussianModel:
         features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
 
         extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
+        self.max_sh_degree = 3
         assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
+        #self.max_sh_degree = 0
         features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
         for idx, attr_name in enumerate(extra_f_names):
             features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
@@ -1373,6 +1403,8 @@ class Renderer:
         override_color=None,
         compute_cov3D_python=False,
         convert_SHs_python=False,
+        static_color=None, # for visualizing overlapping areas
+        dynamic_color=None,
         only_dynamic_splats=False
     ):
         # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
@@ -1430,6 +1462,10 @@ class Renderer:
             opac = self.gaussians.get_opacity
         else:
             opac = torch.vstack((self.gaussians.get_opacity, self.gaussians.opacity_activation(self.gaussians.original_opacity)))
+            #if static_color is not None:
+            #    opac[len(self.gaussians.get_xyz):] = 0.25
+            #if dynamic_color is not None:
+            #    opac[:len(self.gaussians.get_xyz)] = 0.1
         means3D = xyz
         means2D = screenspace_points
         opacity = opac
@@ -1476,6 +1512,11 @@ class Renderer:
                 colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
             else:
                 shs = self.gaussians.get_features
+                # colorize gaussians if given a color
+                if static_color is not None:
+                    shs[len(self.gaussians.get_xyz):, 0] = static_color
+                if dynamic_color is not None:
+                    shs[:len(self.gaussians.get_xyz), 0] = dynamic_color
         else:
             colors_precomp = override_color
 

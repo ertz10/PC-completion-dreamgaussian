@@ -50,6 +50,7 @@ class MVDream(nn.Module):
         self.debug_step = 0
         self.train_steps = 0
         self.timelapse_imgs = []
+        self.overlap_imgs = []
 
         # CUSTOM
         #self.num_train_timesteps = 1000
@@ -377,6 +378,7 @@ class MVDream(nn.Module):
         self,
         pred_rgb, # [B, C, H, W], B is multiples of 4
         timelapse_img,
+        colored_gauss_img,
         camera, # [B, 4, 4]
         customLoss,
         step_ratio=None,
@@ -436,6 +438,8 @@ class MVDream(nn.Module):
         #if self.train_steps >= 450:
         #    guidance_scale = 2
         #self.all_steps = np.append(self.all_steps, step_ratio) # collect all steps for graph plot
+
+        #write_images_to_drive(colored_gauss_img[0], string="colored_overlapping")
 
         # CUSTOM
         with torch.no_grad():
@@ -645,7 +649,12 @@ class MVDream(nn.Module):
             #latents = self.decode_latents(latents)
             #TODO use mask as target (everything except static part)
             #if (self.train_steps % 2 != 0):
-            loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+            ref_loss_nomask_until = 50
+            if self.train_steps <= ref_loss_nomask_until:
+                # only consider 1st image at the beginning
+                loss = F.mse_loss(latents[0].float(), target[0], reduction='sum')
+            else:
+                loss = F.mse_loss(latents.float(), target, reduction='sum')
             #else:
             #    loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
             #    loss -= 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
@@ -655,7 +664,8 @@ class MVDream(nn.Module):
             static_alpha = None
             bool_mask_images = np.zeros((4, 3, img_height, img_width))
             bool_mask_images = torch.tensor((bool_mask_images), dtype=torch.float32).detach()
-            if (self.train_steps % 2 == 0 and only_dynamic_splats == False):
+            if (self.train_steps % 2 == 0 and only_dynamic_splats == False or self.train_steps <= ref_loss_nomask_until):
+            #if (only_dynamic_splats == False):
                 #latents_dec = self.decode_latents(latents).detach()
                 latents_dec = self.decode_latents(latents) # don't use detach() here !
                 #target_dec = self.decode_latents(target).detach()
@@ -672,7 +682,7 @@ class MVDream(nn.Module):
                         #target[valid_cam][static_region[valid_cam].int().bool()] = (static_images[valid_cam] * alphas_stat[valid_cam,:3])[static_region[valid_cam,:3].int().bool()]#static_depth[0,:3]
                         #write_images_to_drive(static_region, string="_static_region")
                         with torch.no_grad():
-                            static_alpha = static_alpha > 0.5
+                            static_alpha = static_alpha > 0.1
                             #static_alpha = static_region
                             bool_mask = static_alpha[valid_cam].int()#static_region[valid_cam].int()
                             #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
@@ -693,7 +703,12 @@ class MVDream(nn.Module):
                         #alphas_stat = alphas_stat[:,:3]
                         # TODO reenable
                         #loss += 0.5 * F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / latents_dec.shape[0]
-                        loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
+                        
+                        if self.train_steps <= ref_loss_nomask_until:
+                            # don't use mask for the first few hundred iterations to bring the splats to move inside the existing part
+                            loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
+                        else:
+                            loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
                         #loss += 0.5 * F.mse_loss(pred_rgb[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / latents_dec.shape[0]
                         #loss += 0.5 * F.mse_loss(target_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / target_dec.shape[0]
                         #loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
@@ -722,7 +737,7 @@ class MVDream(nn.Module):
                         target_debug = self.decode_latents(target).detach()
                         
                         #batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, blended_output, string=r"_batch_debug")
-                        self.batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, bool_mask_images, timelapse_img, object_params, string=r"_batch_debug")
+                        self.batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, bool_mask_images, timelapse_img, colored_gauss_img, object_params, string=r"_batch_debug")
                         #write_images_to_drive(static_region, string="_static_depth_images")
                         
                         print("good Horizontal angles: " + str(current_cam_hors))
@@ -750,7 +765,7 @@ class MVDream(nn.Module):
         return noise_cfg
     
     # CUSTOM
-    def batch_write_images_to_drive(self, input1, input2, input3, input4, input5, timelapse_img, object_params, index=-1, string=""):
+    def batch_write_images_to_drive(self, input1, input2, input3, input4, input5, timelapse_img, colored_overlapping_img, object_params, index=-1, string=""):
 
             import PIL.Image
 
@@ -772,7 +787,8 @@ class MVDream(nn.Module):
 
             #figure2 = PIL.Image.new('RGB', (512 * 4, 512), color=(255, 255, 255))
             figure2 = PIL.Image.new('RGB', (1024, 1024), color=(255, 255, 255))
-            if self.train_steps % 2 == 0:
+            figure3 = PIL.Image.new('RGB', (1024, 1024), color=(255, 255, 255))
+            if self.train_steps % 1 == 0:
                 #for j, img in enumerate(inputs[1]):
                 #for j, img in enumerate(inputs[1]):
                     #img = F.interpolate(img.unsqueeze(0), (512, 512), mode="bilinear", align_corners=False)
@@ -782,6 +798,12 @@ class MVDream(nn.Module):
                 figure2.paste(image, (0, 0))
                 self.timelapse_imgs.append(figure2)
 
+                img = F.interpolate(colored_overlapping_img, (1024, 1024), mode="bilinear", align_corners=False)
+                transform = T.ToPILImage()
+                image = transform(img[0])
+                figure3.paste(image, (0, 0))
+                self.overlap_imgs.append(figure3)
+
             try:
                 #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
                 figure.save(str(object_params.data_path) + '/diffModelDebug.jpg')
@@ -789,11 +811,15 @@ class MVDream(nn.Module):
                     #for x in range(0, 30):
                     #    self.timelapse_imgs.append(self.timelapse_imgs[len(self.timelapse_imgs) - 1])
                     out = cv2.VideoWriter(str(object_params.data_path) + '/timelapse_MVDREAM_coarse.mp4', cv2.VideoWriter.fourcc(*'mp4v'), 30, (1024, 1024))
+                    out_overlap = cv2.VideoWriter(str(object_params.data_path) + '/overlap_timelapse_MVDREAM_coarse.mp4', cv2.VideoWriter.fourcc(*'mp4v'), 30, (1024, 1024))
                     #ext_frames = np.repeat(self.timelapse_imgs, 60)
                     for frame in self.timelapse_imgs:
                         out.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
+                    for frame in self.overlap_imgs:
+                        out_overlap.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
                     out.release()
-                    self.timelapse_imgs[0].save(str(object_params.data_path) + '/timelapseDebug_MVDREAM_coarse.gif', save_all=True, append_images=self.timelapse_imgs[1:], optimize=False, duration=250, loop=0)
+                    out_overlap.release()
+                    #self.timelapse_imgs[0].save(str(object_params.data_path) + '/timelapseDebug_MVDREAM_coarse.gif', save_all=True, append_images=self.timelapse_imgs[1:], optimize=False, duration=250, loop=0)
             except OSError:
                 print("Cannot save image")
          

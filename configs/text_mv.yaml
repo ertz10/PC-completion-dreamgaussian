@@ -63,7 +63,7 @@ H: 800
 W: 800
 
 ### Gaussian splatting
-num_pts: 6000
+num_pts: 40_000
 sh_degree: 0 #default 0 
 position_lr_init: 0.001 #default 0.001 #CHANGED 0.00016 lucid dreamer
 position_lr_final: 0.00002 #0.000005 was good so far #default 0.00002 #0.0000016 after GradeADreamer
@@ -81,7 +81,7 @@ density_start_iter: 0 #default 0
 density_end_iter: 1500 #default 3000
 #CUSTOM default 50
 densification_interval: 100 #default 50, #55 after GradeADreamer
-opacity_reset_interval: 500 #default 700, #500 after GradeADreamer
+opacity_reset_interval: 350 #default 700, #500 after GradeADreamer
 opacity_reset_start_iter: 0
 densify_grad_threshold: 0.00075 #default 0.01
 
