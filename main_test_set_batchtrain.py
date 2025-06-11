@@ -48,17 +48,17 @@ if __name__ == "__main__":
     leather_book = False
 
     
-    #shoe = True
-    #couch = True
-    #vase = True
-    #elephant = True
-    #hocker = True
-    #banana_tuna = True
-    #chicken = True # try again later, seems to build too many splats over time, reduce!
-    #plant = True
-    #pumpkins = True
-    #knife_block = True
-    #rubiks_cube = True
+    shoe = True
+    couch = True
+    vase = True
+    elephant = True
+    hocker = True
+    banana_tuna = True
+    chicken = True # try again later, seems to build too many splats over time, reduce!
+    plant = True
+    pumpkins = True
+    knife_block = True
+    rubiks_cube = True
     headset = True
     tennis_ball = True
     flashlight = True

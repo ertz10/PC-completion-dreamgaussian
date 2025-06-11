@@ -364,6 +364,10 @@ class GUI:
             #render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
             render_resolution = self.opt_object.mv_dream_render_res#128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512) #self.opt_object.mv_dream_render_res#
             images = []
+            colored_images = []
+            colored_images_static = []
+            colored_images_alpha = []
+            colored_images_static_alpha = []
             AABBimages = []
             static_images = []
             dynamic_images = []
@@ -408,7 +412,12 @@ class GUI:
                 radius = 0.0#-1.25
 
                 # CUSTOM
+                if (self.step == self.opt_object.max_steps):
+                    #pose = orbit_camera(10, 0, self.opt.radius + radius)
+                    ver = -20
+                    hor = 0
                 pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
+                
                 # TODO maybe change hor to -180 to 180 for pose only ?
                 #pose = orbit_camera(self.opt.elevation + ver, hor - 180, self.opt.radius + radius)
                 #pose = orbit_camera(self.opt.elevation, hor, self.opt.radius + radius)
@@ -441,9 +450,15 @@ class GUI:
                 # colorize static and dynamic gaussians
                 static_color = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device="cuda")
                 dynamic_color = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device="cuda")
-                out_debug_col = self.renderer.render(cur_cam_debug, bg_color=torch.tensor([1,1,1], dtype=torch.float32, device='cuda'), static_color=static_color, dynamic_color=dynamic_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                debug_color_image = self.renderer.render(cur_cam_debug, bg_color=torch.tensor([1,1,1], dtype=torch.float32, device='cuda'), static_color=static_color, dynamic_color=dynamic_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                # render only static part
+                out_debug_col = self.renderer.render(cur_cam, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color)
+                out_debug_col_static = self.renderer.render(cur_cam, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color, only_static_splats=True)
                 ##############
                 # DEBUG render end
+
+                out_alpha = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=False)
+                out_static_alpha = self.renderer.render(cur_cam, bg_color=bg_color, only_static_splats=True)
 
                 #CUSTOM render Bounding Box to image
                 #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam, self.opt.radius + radius)
@@ -463,6 +478,20 @@ class GUI:
 
                 image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
                 images.append(image)
+                image_alpha = out_alpha["depth"].unsqueeze(0)
+                image_static_alpha = out_static_alpha["depth"].unsqueeze(0)
+                colored_image = out_debug_col["image"].unsqueeze(0)
+                colored_image_alpha = out_debug_col["alpha"].unsqueeze(0)
+                colored_image_static = out_debug_col_static["image"].unsqueeze(0)
+                colored_image_static_alpha = out_debug_col_static["alpha"].unsqueeze(0)
+                colored_images.append(colored_image)
+                colored_images_static.append(colored_image_static)
+                #colored_images_alpha.append(colored_image_alpha)
+                #colored_images_static_alpha.append(colored_image_static_alpha)
+                colored_images_alpha.append(image_alpha)
+                colored_images_static_alpha.append(image_static_alpha)
+
+
 
                 # enable mvdream training
                 if self.opt.mvdream or self.opt.imagedream:
@@ -500,6 +529,9 @@ class GUI:
                             # ONLY FOR DEBUG PURPOSE TODO remove in final version
                         out_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
 
+                        out_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=False)
+                        out_static_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_static_splats=True)
+
                         #CUSTOM render Bounding Box to image
                         #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam_i, self.opt.radius + radius)
                         ######################################################################
@@ -513,10 +545,27 @@ class GUI:
                         #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
                         #AABBimages.append(AABBimage)
                         ######################################################################
-                        ######################################################################      
+                        ######################################################################    
+                        # 
+                        out_debug_col = self.renderer.render(cur_cam_i, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color)
+                        out_debug_col_static = self.renderer.render(cur_cam_i, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color, only_static_splats=True)
+                          
 
                         image = out_i["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
                         images.append(image)
+                        image_alpha = out_alpha["depth"].unsqueeze(0)
+                        image_static_alpha = out_static_alpha["depth"].unsqueeze(0)
+                        colored_image = out_debug_col["image"].unsqueeze(0)
+                        colored_image_alpha = out_debug_col["alpha"].unsqueeze(0)
+                        colored_images.append(colored_image)
+                        #colored_images_alpha.append(colored_image_alpha)
+                        colored_image_static = out_debug_col_static["image"].unsqueeze(0)
+                        colored_image_static_alpha = out_debug_col_static["alpha"].unsqueeze(0)
+                        colored_images_static.append(colored_image_static)
+                        #colored_images_static_alpha.append(colored_image_static_alpha)
+                        colored_images_alpha.append(image_alpha)
+                        colored_images_static_alpha.append(image_static_alpha)
+
 
                 # CUSTOM
                 #self.customLoss.write_capture_to_drive(AABBimages, cur_cam.image_width, cur_cam.image_height, len(AABBimages))
@@ -524,7 +573,7 @@ class GUI:
                 #images_blended = self.customLoss.blend_images(AABBimages, images)
 
                 if self.debug_step % 1 == 0:
-                    write_images_to_drive(images, 0)
+                    #write_images_to_drive(images, 0)
                     self.debug_step = 0
 
             images = torch.cat(images, dim=0)
@@ -540,7 +589,7 @@ class GUI:
                     #loss = loss + 1.0 * self.customLoss.guidance_weighting(step=self.step, guidance_type="text", xp=xp, fp=fp) * self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, self.customLoss, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                     #                                                                                                                                                        dynamic_images=dynamic_images, static_images=static_images, 
                     #                                                                                                                                                        dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor)
-                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), out_debug_col["image"].unsqueeze(0), poses, self.customLoss, guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
+                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), debug_color_image["image"].unsqueeze(0), colored_images, colored_images_static, colored_images_alpha, colored_images_static_alpha, poses, self.customLoss, guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
                                                                                                                                                                                 dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
                                                                                                                                                                                 current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, 

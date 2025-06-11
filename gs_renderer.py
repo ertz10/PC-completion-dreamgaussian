@@ -952,7 +952,7 @@ class GaussianModel:
         #features_dc[mask_subsampled == 1] = features[mask_subsampled == 1, :, 0:1].cpu().numpy()
         #features_extra[mask_subsampled == 1] = features[mask_subsampled == 1, :, 1:].cpu().numpy()
         features_dc = np.vstack((features[0:len(xyz_2), :, 0:1].cpu().numpy(), features_dc))
-        features_extra = features[:,:,1:]#np.vstack((features[0:len(xyz_2), :, 1:].cpu().numpy(), features_extra)) # TODO omit SH coefficients
+        features_extra = features[:,:,1:].cpu().numpy() #np.vstack((features[0:len(xyz_2), :, 1:].cpu().numpy(), features_extra)) # TODO omit SH coefficients
         # TODO TEST #
         #features_dc = features[:, :, 0:1]
         #features_extra = features[:, :, 1:]
@@ -966,10 +966,21 @@ class GaussianModel:
 
         self.active_sh_degree = self.max_sh_degree
         self.spatial_lr_scale = spatial_lr_scale
+
+        # filter inf and nans
+        if (np.isinf(opacities).any()):
+            print("Found inf value in opacities, filtering ...")
+            mask = np.squeeze(np.isinf(opacities), 1)
+            mask_subsampled = np.delete(mask_subsampled, mask) #np.concatenate((mask_subsampled[np.isinf(opacities) == False], mask_subsampled[mask_subsampled == 1]))
+            xyz = np.delete(xyz, mask, 0)
+            features_dc = np.delete(features_dc, mask, 0)
+            features_extra = np.delete(features_extra, mask, 0)
+            opacities = np.delete(opacities, mask, 0)
+            scales = np.delete(scales, mask, 0)
+            rots = np.delete(rots, mask, 0)
+
         self.static_points_mask = mask_subsampled.copy()
-        #self.max_radii2D = torch.zeros((self.get_xyz.shape[0] + len(mask_subsampled[mask_subsampled == 0])), device="cuda")
         self.max_radii2D = torch.zeros((len(self.static_points_mask[self.static_points_mask == 1])), device="cuda")
-        #self.max_radii2D = torch.zeros((len(self.static_points_mask)), device="cuda")
 
         self.original_xyz = torch.tensor(xyz[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
         self.original_featuresdc = torch.tensor(features_dc[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
@@ -1405,7 +1416,8 @@ class Renderer:
         convert_SHs_python=False,
         static_color=None, # for visualizing overlapping areas
         dynamic_color=None,
-        only_dynamic_splats=False
+        only_dynamic_splats=False,
+        only_static_splats=False
     ):
         # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
         #CUSTOM
@@ -1413,6 +1425,8 @@ class Renderer:
         xyz = None
         if (only_dynamic_splats):
             xyz = self.gaussians.get_xyz
+        elif (only_static_splats):
+            xyz = self.gaussians.original_xyz
         else:
             xyz = torch.vstack((self.gaussians.get_xyz, self.gaussians.original_xyz))
 
@@ -1460,6 +1474,8 @@ class Renderer:
         opac = None
         if (only_dynamic_splats):
             opac = self.gaussians.get_opacity
+        elif (only_static_splats):
+            opac = self.gaussians.original_opacity
         else:
             opac = torch.vstack((self.gaussians.get_opacity, self.gaussians.opacity_activation(self.gaussians.original_opacity)))
             #if static_color is not None:
@@ -1487,6 +1503,9 @@ class Renderer:
         if (only_dynamic_splats):
             sc = scales
             rot = rotations
+        elif (only_static_splats):
+            sc = self.gaussians.scaling_activation(self.gaussians.original_scaling)
+            rot = self.gaussians.rotation_activation(self.gaussians.original_rotation)
         else:
             sc = torch.vstack((scales, self.gaussians.scaling_activation(self.gaussians.original_scaling)))
             rot = torch.vstack((rotations, self.gaussians.rotation_activation(self.gaussians.original_rotation)))
@@ -1511,12 +1530,20 @@ class Renderer:
                 )
                 colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
             else:
-                shs = self.gaussians.get_features
-                # colorize gaussians if given a color
-                if static_color is not None:
-                    shs[len(self.gaussians.get_xyz):, 0] = static_color
-                if dynamic_color is not None:
-                    shs[:len(self.gaussians.get_xyz), 0] = dynamic_color
+                if (only_static_splats):
+                    shs = torch.cat((self.gaussians.original_featuresdc, self.gaussians.original_features_rest), dim=1)
+                    if static_color is not None:
+                        shs[:,0] = static_color
+                        shs[:,1:] = 0.0
+                else:
+                    shs = self.gaussians.get_features
+                    # colorize gaussians if given a color
+                    if static_color is not None:
+                        shs[len(self.gaussians.get_xyz):, 0] = static_color
+                        shs[len(self.gaussians.get_xyz):, 1:] = 0.0
+                    if dynamic_color is not None:
+                        shs[:len(self.gaussians.get_xyz), 0] = dynamic_color
+                        shs[:len(self.gaussians.get_xyz), 1:] = 0.0
         else:
             colors_precomp = override_color
 

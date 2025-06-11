@@ -52,6 +52,10 @@ class MVDream(nn.Module):
         self.timelapse_imgs = []
         self.overlap_imgs = []
 
+        self.sds_losses = []
+        self.reference_losses = []
+        self.reference_loss_steps = 0
+
         # CUSTOM
         #self.num_train_timesteps = 1000
         #TODO
@@ -378,7 +382,11 @@ class MVDream(nn.Module):
         self,
         pred_rgb, # [B, C, H, W], B is multiples of 4
         timelapse_img,
-        colored_gauss_img,
+        colored_gauss_img_vis,
+        colored_gauss_imgs,
+        colored_gauss_imgs_static,
+        colored_gauss_imgs_alpha,
+        colored_gauss_imgs_static_alpha,
         camera, # [B, 4, 4]
         customLoss,
         step_ratio=None,
@@ -393,53 +401,8 @@ class MVDream(nn.Module):
         object_params=None,
         only_dynamic_splats=False,
     ):
-        
-        # CUSTOM
-        def write_images_to_drive(input_tensor, index=-1, string=""):
 
-                import PIL.Image
-
-                img_width = input_tensor.shape[1]
-                img_height = input_tensor.shape[2]
-                # create figure
-                figure = PIL.Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
-
-                # add images
-                #for i, img in enumerate(input_tensor):
-                transform = T.ToPILImage()
-                image = transform(input_tensor)
-                figure.paste(image, (0, 0))
-
-                try:
-                    #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
-                    figure.save(str(object_params.data_path) + "/" + str(string) + ".jpg")
-                except OSError:
-                    print("Cannot save image")
-
-        #CUSTOM
-        #self.base_ratio = 1.0 / 500.0 # 1 / overall iterations
         self.train_steps += 1
-        #self.num_train_timesteps = 200
-        #TODO BEWARE !!!! self.num_train_time_steps also has to be adjusted 
-        # above in the init section!! since max and min steps depend on it!!
-        #self.num_train_timesteps = 400# * (1.0 - step_ratio*4.0)
-        #self.num_train_timesteps = 400
-        #if self.train_steps % 2 == 0:
-        #    guidance_scale = 75.0
-        #if self.train_steps < 400:
-        #    guidance_scale = 100.0
-        #    step_ratio *= 0.5
-        #if self.train_steps >= 400 and self.train_steps < 1000:
-        #    guidance_scale = 100.0
-        #    guidance_scale = 5.0
-            #step_ratio *= 1.2
-        #if self.train_steps >= 400 and self.train_steps <= 500:
-        #    guidance_scale = 25.0
-        #if self.train_steps >= 450:
-        #    guidance_scale = 2
-        #self.all_steps = np.append(self.all_steps, step_ratio) # collect all steps for graph plot
-
-        #write_images_to_drive(colored_gauss_img[0], string="colored_overlapping")
 
         # CUSTOM
         with torch.no_grad():
@@ -654,35 +617,55 @@ class MVDream(nn.Module):
                 # only consider 1st image at the beginning
                 loss = F.mse_loss(latents[0].float(), target[0], reduction='sum')
             else:
-                loss = F.mse_loss(latents.float(), target, reduction='sum')
+                loss = F.mse_loss(latents.float(), target, reduction='sum') #0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+
+            sds_loss = loss.clone().detach()
+            #if self.train_steps > ref_loss_nomask_until and self.train_steps % 2 != 0:
+            #    loss = F.mse_loss(latents.float(), target, reduction='sum')
+            #else:
+            #    loss = F.mse_loss(latents.float(), latents.float(), reduction='sum')
+            
             #else:
             #    loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
             #    loss -= 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
-            #loss = F.mse_loss(latents.float(), target, reduction='sum') * 1000.0
+            #loss = F.mse_loss(latents.float(), target, reduction='sum')
 
             # 2ND LOSS
             static_alpha = None
             bool_mask_images = np.zeros((4, 3, img_height, img_width))
             bool_mask_images = torch.tensor((bool_mask_images), dtype=torch.float32).detach()
+
+            colored_gauss_imgs = torch.vstack((colored_gauss_imgs))
+            colored_gauss_imgs_static = torch.vstack((colored_gauss_imgs_static))
+            colored_gauss_imgs = F.interpolate(colored_gauss_imgs, (img_width, img_height), mode="bilinear", align_corners=False)
+            colored_gauss_imgs_static = F.interpolate(colored_gauss_imgs_static, (img_width, img_height), mode="bilinear", align_corners=False).detach() # target
+
+            colored_gauss_imgs_alpha = torch.vstack((colored_gauss_imgs_alpha))
+            colored_gauss_imgs_static_alpha = torch.vstack((colored_gauss_imgs_static_alpha))
+            colored_gauss_imgs_alpha = F.interpolate(colored_gauss_imgs_alpha, (img_width, img_height), mode="bilinear", align_corners=False)
+            colored_gauss_imgs_static_alpha = F.interpolate(colored_gauss_imgs_static_alpha, (img_width, img_height), mode="bilinear", align_corners=False).detach() # target
+
+            #static_depth_images = torch.vstack((static_depth_images)).unsqueeze(1)
+            #dynamic_depth_images = torch.vstack((dynamic_depth_images)).unsqueeze(1)
+            #static_depth_images = F.interpolate(static_depth_images, (img_width, img_height), mode="bilinear", align_corners=False)
+            #dynamic_depth_images = F.interpolate(dynamic_depth_images, (img_width, img_height), mode="bilinear", align_corners=False)
+
+            #target2 = dynamic_depth_images.detach()
+            reference_loss = 0
             if (self.train_steps % 2 == 0 and only_dynamic_splats == False or self.train_steps <= ref_loss_nomask_until):
             #if (only_dynamic_splats == False):
-                #latents_dec = self.decode_latents(latents).detach()
                 latents_dec = self.decode_latents(latents) # don't use detach() here !
-                #target_dec = self.decode_latents(target).detach()
-                with torch.no_grad():
-                    static_images = torch.stack((static_images)).detach()
-                    static_images = F.interpolate((static_images), (img_width, img_height), mode="bilinear", align_corners=False)
-                    static_alpha = torch.repeat_interleave(static_images[:,3:], 3, 1)
-                    static_images = static_images[:,:3]
+                
+                #with torch.no_grad():
+                static_images = torch.stack((static_images)).detach()
+                static_images = F.interpolate((static_images), (img_width, img_height), mode="bilinear", align_corners=False)
+                static_alpha = torch.repeat_interleave(static_images[:,3:], 3, 1)
+                static_images = static_images[:,:3]
                 if (valid_cams.shape[0] != 0):
+
                     for valid_cam in valid_cams:
-                        #if(self.train_steps % 10 == 0):
-                        #    target = target
-                        #else:
-                        #target[valid_cam][static_region[valid_cam].int().bool()] = (static_images[valid_cam] * alphas_stat[valid_cam,:3])[static_region[valid_cam,:3].int().bool()]#static_depth[0,:3]
-                        #write_images_to_drive(static_region, string="_static_region")
                         with torch.no_grad():
-                            static_alpha = static_alpha > 0.1
+                            static_alpha = static_alpha > 0.15
                             #static_alpha = static_region
                             bool_mask = static_alpha[valid_cam].int()#static_region[valid_cam].int()
                             #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
@@ -696,35 +679,41 @@ class MVDream(nn.Module):
                             #write_images_to_drive(bool_mask.squeeze(0), string="mask_eroded")
                             bool_mask = bool_mask.squeeze(0).bool()
                             bool_mask = torch.repeat_interleave(bool_mask, 3, 0)
-                            #bool_mask_images.append(bool_mask)
                             bool_mask_images[valid_cam] = bool_mask.float()
-                            #'''
-                            #bool_mask = bool_mask.squeeze(0).bool()
-                        #alphas_stat = alphas_stat[:,:3]
-                        # TODO reenable
-                        #loss += 0.5 * F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / latents_dec.shape[0]
                         
-                        if self.train_steps <= ref_loss_nomask_until:
+                        if self.train_steps <= ref_loss_nomask_until: #or self.train_steps >= 300 and self.train_steps <= 350 or self.train_steps >= 600 and self.train_steps <= 650 or self.train_steps >= 1500 and self.train_steps <= 1800 :
                             # don't use mask for the first few hundred iterations to bring the splats to move inside the existing part
-                            loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
+                            #loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
+                            #reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam] * static_alpha[valid_cam], colored_gauss_imgs[valid_cam] * static_alpha[valid_cam], reduction='sum').detach()
+                            #loss += F.mse_loss(colored_gauss_imgs_static[valid_cam] * static_alpha[valid_cam], colored_gauss_imgs[valid_cam] * static_alpha[valid_cam], reduction='sum')
+                            reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum').detach()
+                            loss += 2.0 * F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum')
+                            #loss += F.mse_loss(colored_gauss_imgs_static_alpha[valid_cam], colored_gauss_imgs_alpha[valid_cam], reduction='sum')
+                            #loss += F.mse_loss(static_depth_images[valid_cam], target2[valid_cam], reduction='sum')
                         else:
-                            loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
-                        #loss += 0.5 * F.mse_loss(pred_rgb[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / latents_dec.shape[0]
-                        #loss += 0.5 * F.mse_loss(target_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum') / target_dec.shape[0]
-                        #loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
-
-            ############### Custom loss on features of dynamic splats to resemble existing static part #############
-            #dynamic_images = latents
-            #static_images = self.encode_imgs(static_images)
-            #if (self.train_steps < 50):
-            #latents_dec = self.decode_latents(latents)
-            #loss += F.mse_loss(latents_dec.float(), static_images, reduction='sum') * 0.1
+                            #loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
+                            reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum').detach()
+                            loss += 2.0 * F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum')
+                            #reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], reduction='sum').detach()
+                            #loss += F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], reduction='sum')
+                            #loss += F.mse_loss(colored_gauss_imgs_static_alpha[valid_cam, bool_mask], colored_gauss_imgs_alpha[valid_cam, bool_mask], reduction='sum')
+                            #loss += F.mse_loss(static_depth_images[valid_cam, bool_mask], target2[valid_cam, bool_mask], reduction='sum')
+                    
+                    self.reference_loss_steps += 1
+                    ############# plot #####################
+                    self.sds_losses = np.append(self.sds_losses, sds_loss.item())
+                    self.reference_losses = np.append(self.reference_losses, reference_loss.item())
+                    ##########################################################
             
             
 
         #CUSTOM
         if object_params.DEBUG and self.train_steps % object_params.DEBUG_VIS_INTERVAL == 0:
+            
+
             with torch.no_grad():
+                
+
                 self.debug_step += 1
                 if self.debug_step % 1 == 0:
                         noisy_input = self.decode_latents(latents_noisy).detach()
@@ -737,7 +726,8 @@ class MVDream(nn.Module):
                         target_debug = self.decode_latents(target).detach()
                         
                         #batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, blended_output, string=r"_batch_debug")
-                        self.batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, bool_mask_images, timelapse_img, colored_gauss_img, object_params, string=r"_batch_debug")
+                        #self.batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, bool_mask_images, timelapse_img, colored_gauss_img_vis, object_params, string=r"_batch_debug")
+                        self.batch_write_images_to_drive(noisy_input, gs_renders, colored_gauss_imgs, colored_gauss_imgs_static, bool_mask_images * static_alpha.cpu(), timelapse_img, colored_gauss_img_vis, object_params, string=r"_batch_debug")
                         #write_images_to_drive(static_region, string="_static_depth_images")
                         
                         print("good Horizontal angles: " + str(current_cam_hors))
@@ -820,6 +810,25 @@ class MVDream(nn.Module):
                     out.release()
                     out_overlap.release()
                     #self.timelapse_imgs[0].save(str(object_params.data_path) + '/timelapseDebug_MVDREAM_coarse.gif', save_all=True, append_images=self.timelapse_imgs[1:], optimize=False, duration=250, loop=0)
+
+                    #plt.ylim(top=500)
+                    plt.yscale("log")
+                    plt.plot(np.arange(self.reference_loss_steps), self.sds_losses, color="red")
+                    #plt.show()
+                    #plt.savefig(r"debug/sds_loss_plot.png")
+                    plt.plot(np.arange(self.reference_loss_steps), self.reference_losses, color="green")
+                    plt.legend(['SDS loss', 'REF loss'])
+                    #plt.show()
+                    try:
+                        plt.savefig(str(object_params.data_path) + '/loss_graph.jpg')
+                        plt.figure().clear()
+                        #figure.save(str(object_params.data_path) + '/diffModelDebug.jpg')
+                    except OSError:
+                        print("Couldn't save image")
+                    plt.close()
+                    plt.cla()
+                    plt.clf()
+            
             except OSError:
                 print("Cannot save image")
          
