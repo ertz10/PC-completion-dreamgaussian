@@ -541,7 +541,7 @@ class GaussianModel:
         PlyData([el]).write(path)
 
     def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01)) #modified
         #opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.1)) #original
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
@@ -707,8 +707,8 @@ class GaussianModel:
         # Average of existing colors
         avg_col = np.mean(features_dc, axis=0).squeeze(1)#torch.mean(SH2RGB(fused_color), dim=0)
         #avg_col = RGB2SH(avg_col) * 255.0
-        features[:, :3, 0] = torch.tensor(avg_col, dtype=torch.float, device="cuda")
-        #features[:, :3, 0] = torch.tensor([0.1, 0.1, 0.1], dtype=torch.float, device="cuda")
+        #features[:, :3, 0] = torch.tensor(avg_col, dtype=torch.float, device="cuda")
+        features[:, :3, 0] = torch.tensor([0.3, 0.3, 0.3], dtype=torch.float, device="cuda")
         features[:, 3:, 1:] = 0.0
 
 
@@ -914,6 +914,7 @@ class GaussianModel:
         xyz = np.vstack((xyz_2, xyz))
         #temp_opacities = inverse_sigmoid(0.1 * torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy()
         temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.01).cpu().numpy()
+        #temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.1).cpu().numpy()
         #temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.25).cpu().numpy()
         # TODO FILTER OUT INF VALUES, and NAN ?!!
         #opacities = inverse_sigmoid(torch.from_numpy(opacities)).cpu().numpy()
@@ -1281,6 +1282,8 @@ class GaussianModel:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
             prune_mask = torch.logical_or(torch.logical_or(prune_mask, big_points_vs), big_points_ws)
+
+        print("Average opacity: ", torch.mean(self.get_opacity))
         self.prune_points(prune_mask)
 
         torch.cuda.empty_cache()

@@ -1,0 +1,1 @@
+tensor([[[[0.1917]]]], grad_fn=<AddBackward0>)

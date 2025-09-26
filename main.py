@@ -36,7 +36,7 @@ class GUI:
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
 
         self.mode = "image"
-        self.seed = 0#"random"
+        self.seed = 42#"random"
 
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         self.need_update = True  # update buffer_image
@@ -415,7 +415,7 @@ class GUI:
                 if (self.step == self.opt_object.max_steps):
                     #pose = orbit_camera(10, 0, self.opt.radius + radius)
                     ver = -20
-                    hor = 0
+                    hor = self.opt_object.reference_angle_hor #0
                 pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
                 
                 # TODO maybe change hor to -180 to 180 for pose only ?
@@ -434,6 +434,10 @@ class GUI:
                 cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
 
                 bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
+                if (self.step == self.opt_object.max_steps):
+                    # use white for the last iteration
+                    bg_color = torch.tensor([1, 1, 1], dtype=torch.float32, device="cuda")
+
                 # Custom
                 out = None
                 #if (self.step == 500):
@@ -617,7 +621,7 @@ class GUI:
             ##############################################################
 
             # optimize step
-
+            #loss = loss / 1.0
             loss.backward()
             # CUSTOM this is where gaussian pos change happens, optimizer step
             self.optimizer.step()
@@ -646,6 +650,8 @@ class GUI:
                 if self.step % self.opt.densification_interval == 0:
                     #self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.005, extent=4, max_screen_size=1)
                     self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
+                    #self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.025, extent=4, max_screen_size=1)
+                    #self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
                 
                 if self.step % self.opt.opacity_reset_interval == 0 and self.step > self.opt.opacity_reset_start_iter:
                     self.renderer.gaussians.reset_opacity()

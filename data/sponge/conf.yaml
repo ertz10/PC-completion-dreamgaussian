@@ -1,0 +1,63 @@
+AABB: #[-0.2, 0.2, -0.4, 0.2, -0.4, -0.2]
+init_sphere_radius: 0.5
+
+visible_angles: [60, 150] # circle going from 0 - 360
+reference_angle_hor:  105 #an estimated angle at which the object was captured
+reference_angle_ver:  -5 #an estimated angle at which the object was captured (vertical)
+
+# transformations
+rotation: [1.7, -0.6, 0.8]
+translation: [0.0, 0.0, 0.0] 
+scale: 1.7
+dyn_gs_init_scale: [0.1, 0.1, 0.1]
+
+data_path: "data/sponge"
+load: "data/sponge/sponge_cropped.ply"
+
+num_pts_init: 5_000
+
+max_steps: 5000 # ATTENTION: change in text_mv.yaml as well
+max_steps_refine: 5000 # ATTENTION: change in text.yaml as well
+max_steps_tex_refine: 2000
+batch_size_tex_refine: 1
+guidance_scale: 15.0
+
+max_steps_ref_loss: 2500
+ref_loss_nomask_until: 50
+ref_loss_strength: 2.0 # must be > 0
+
+position_lr_factor: 10
+
+reference_angle_h: 60
+reference_angle_v: -15
+
+# guidance rescale
+guidance_rescale: 1.0 #https://arxiv.org/pdf/2305.08891.pdf
+#
+
+# For testing purposes (set True for practically running the vanilla method)
+only_dynamic_splats: false
+
+t_range: [0.02, 0.5]
+
+# ISM
+ism: True # interval score matching (lucid dreamer)
+annealing_intervals: true
+delta_t: 50
+delta_t_start: 100
+xs_delta_t: 200
+xs_inv_steps: 5
+denoise_guidance_scale: 1.0
+xs_eta: 0.0
+
+mv_dream_render_res: 512
+sd_render_res: 512
+
+# ISM optimization params
+warmup_iter: 1500
+
+inverse_text: ''
+
+DEBUG: true
+DEBUG_VIS_INTERVAL: 100
+sds_loss_only: false

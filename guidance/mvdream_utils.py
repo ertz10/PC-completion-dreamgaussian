@@ -59,10 +59,12 @@ class MVDream(nn.Module):
         # CUSTOM
         #self.num_train_timesteps = 1000
         #TODO
-        self.num_train_timesteps = 1000
+        self.num_train_timesteps = 1000 #1000
         self.min_step = int(self.num_train_timesteps * t_range[0])
         self.max_step = int(self.num_train_timesteps * t_range[1])
         self.all_steps = []
+
+        self.momentumBuffer = MomentumBuffer(momentum=-0.75)
 
         self.noise = None
 
@@ -72,6 +74,7 @@ class MVDream(nn.Module):
 
         self.scheduler = DDIMScheduler.from_pretrained(
             "stabilityai/stable-diffusion-2-1-base", subfolder="scheduler", torch_dtype=self.dtype
+            #"stabilityai/stable-diffusion-2-inpainting", subfolder="scheduler", torch_dtype=self.dtype
         )
         #CUSTOM
         #self.pipe = StableDiffusionInpaintPipeline.from_pretrained(
@@ -405,13 +408,13 @@ class MVDream(nn.Module):
         self.train_steps += 1
 
         # CUSTOM
-        with torch.no_grad():
-            img_width = static_images[0].shape[1]
-            img_height = static_images[0].shape[2]
-            if(img_width > 256):
-                img_width = 256
-            if(img_height > 256):
-                img_height = 256
+        #with torch.no_grad():
+        img_width = static_images[0].shape[1]
+        img_height = static_images[0].shape[2]
+        if(img_width > 256):
+            img_width = 256
+        if(img_height > 256):
+            img_height = 256
             #
         
         batch_size = pred_rgb.shape[0]
@@ -437,29 +440,49 @@ class MVDream(nn.Module):
             t = torch.randint(self.min_step, self.max_step + 1, (real_batch_size,), dtype=torch.long, device=self.device).repeat(4)
 
         '''
+        #'''
         if step_ratio is not None:
             max_linear_anneal_iters = 700
             if self.train_steps <= max_linear_anneal_iters:
                 # dreamtime-like
                 #t = self.max_step - (self.max_step - self.min_step) * np.sqrt(step_ratio)
                 step_ratio = min(1, self.train_steps / max_linear_anneal_iters) # do not use too low "t" at the beginning
-                t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
-                #t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
-                t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
+                #t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
+                #t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device) 
+                t = torch.randint(int(self.max_step * 0.5), int(self.max_step * 0.8) + 1, (batch_size,), dtype=torch.long, device=self.device) 
+                #t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
             #elif self.train_steps > 700 and self.train_steps <= 900: # after gradADreamer
             #    step_ratio = min(1, self.train_steps / 900)
             #    t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
             #    t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
                 #guidance_scale *= 1.5
-            elif self.train_steps > max_linear_anneal_iters and self.train_steps <= 1000: # after gradADreamer
+            #elif self.train_steps > max_linear_anneal_iters and self.train_steps <= 1000: #<= 1500: # after gradADreamer
                 # t ~ U(0.02, 0.98)
-                t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
+                # TODO TRY TO USE a single t for all images, not random for each image!
+                #t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
+                ######t = torch.randint(int(self.max_step * 0.5), self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
+                #t = torch.randint(self.min_step, self.max_step + 1, (1,), dtype=torch.long, device=self.device).repeat(batch_size)
+                #t = torch.randint(int(self.max_step * 0.35), self.max_step + 1, (1,), dtype=torch.long, device=self.device).repeat(batch_size)
+                #t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
+                #guidance_scale *= 2.0
+            elif self.train_steps > max_linear_anneal_iters and self.train_steps <= 1500:
+                t = torch.randint(int(self.max_step * 0.4), int(self.max_step * 0.65) + 1, (batch_size,), dtype=torch.long, device=self.device)
+            elif self.train_steps > 1500 and self.train_steps <= 3500:
+                # t ~ U(0.02, 0.50 * 980) # after gradADreamer
+                #t = torch.randint(self.min_step, int(self.max_step * 0.5) + 1, (batch_size,), dtype=torch.long, device=self.device)
+                #t = torch.randint(self.min_step, int(self.max_step * 0.5) + 1, (batch_size,), dtype=torch.long, device=self.device)
+                t = torch.randint(int(self.max_step * 0.25), int(self.max_step * 0.65) + 1, (batch_size,), dtype=torch.long, device=self.device)
+                #t = torch.randint(int(self.max_step * 0.25), int(self.max_step * 0.5) + 1, (1,), dtype=torch.long, device=self.device).repeat(batch_size)
+                #t = torch.randint(self.min_step, int(self.max_step * 0.5) + 1, (batch_size,), dtype=torch.long, device=self.device)
                 #guidance_scale *= 2.0
             else:
-                # t ~ U(0.02, 0.50) # after gradADreamer
-                t = torch.randint(self.min_step, int(self.max_step * 0.5) + 1, (batch_size,), dtype=torch.long, device=self.device)
+                # t ~ U(0.02, 0.15 * 980) texture refinement 
+                t = torch.randint(self.min_step, int(self.max_step * 0.25) + 1, (batch_size,), dtype=torch.long, device=self.device)
+                #t = torch.randint(self.min_step, int(self.max_step * 0.5) + 1, (1,), dtype=torch.long, device=self.device).repeat(batch_size)
+                #t = torch.randint(self.min_step, int(self.max_step * 0.35) + 1, (1,), dtype=torch.long, device=self.device).repeat(batch_size)
+                #t = torch.randint(self.min_step, int(self.max_step * 0.25) + 1, (batch_size,), dtype=torch.long, device=self.device)
                 #guidance_scale *= 2.0
-
+        #'''
         else:
             t = torch.randint(self.min_step, self.max_step + 1, (real_batch_size,), dtype=torch.long, device=self.device).repeat(4)
 
@@ -555,15 +578,23 @@ class MVDream(nn.Module):
             noise_pred = self.model.apply_model(latent_model_input, tt, context)
 
             # perform guidance (high scale from paper!)
-            noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
-            ###################################################################
-            #'''
-            # CFG rescale copied from pipeline_stable_diffusion.py
-            if object_params.guidance_rescale > 0.0:
-                    # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
-                    noise_pred = self.rescale_noise_cfg(noise_pred, noise_pred_cond, guidance_rescale=object_params.guidance_rescale)
-            #####
+            # https://github.com/bytedance/MVDream-threestudio/blob/main/threestudio/models/guidance/multiview_diffusion_guidance.py
+        noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
+        # don't use torch.no_grad() here
+        #noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
+        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+        ###################################################################
+        #'''
+        # CFG rescale copied from pipeline_stable_diffusion.py
+        if object_params.guidance_rescale > 0.0:
+                # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+                noise_pred = self.rescale_noise_cfg(noise_pred, noise_pred_cond, guidance_rescale=object_params.guidance_rescale)
+        #####
+        # APG
+        #denoised_cond = noise_pred_cond - noise #self.model.predict_start_from_noise(latents_noisy, t, noise_pred_cond)
+        #denoised_uncond = noise_pred_uncond - noise #self.model.predict_start_from_noise(latents_noisy, t, noise_pred_uncond)
+        #denoised_pred = adaptive_projected_guidance(denoised_cond, denoised_uncond, guidance_scale, self.momentumBuffer)
+        #noise_pred = denoised_pred
 
         # CUSTOM
         with_recon_loss = False
@@ -576,22 +607,46 @@ class MVDream(nn.Module):
             #write_images_to_drive(self.decode_latents(self.model.predict_start_from_noise(latents_noisy, t, noise_pred)), string="_noise_pred_after_rescale")
             #write_images_to_drive(self.decode_latents(self.model.predict_start_from_noise(latents_recon, t, noise_pred)), string="_noise_pred_after_rescale")
 
+            
+            #else:
+            latents_recon = self.model.predict_start_from_noise(latents_noisy, t, noise_pred)
+
+            if object_params.guidance_rescale > 0:
+                latents_recon_nocfg = self.model.predict_start_from_noise(latents_noisy, t, noise_pred_cond)
+                latents_recon_nocfg_reshape = latents_recon_nocfg.view(-1,batch_size, *latents_recon_nocfg.shape[1:])
+                latents_recon_reshape = latents_recon.view(-1,batch_size, *latents_recon.shape[1:])
+                factor = (latents_recon_nocfg_reshape.std([1,2,3,4],keepdim=True) + 1e-8) / (latents_recon_reshape.std([1,2,3,4],keepdim=True) + 1e-8)
+
+                latents_recon_adjust = latents_recon.clone() * factor.squeeze(1).repeat_interleave(batch_size, dim=0)
+                latents_recon = object_params.guidance_rescale * latents_recon_adjust + (1-object_params.guidance_rescale) * latents_recon
+                #latents_recon = object_params.guidance_rescale * latents_recon + (1-object_params.guidance_rescale) * latents_recon_adjust
+
+
             # calculate loss
-            '''
-            loss = 0.5 * F.mse_loss(latents.float(), latents_recon.detach(), reduction="sum") / latents.shape[0]
+            #'''
+            loss = 0.5 * F.mse_loss(latents, latents_recon.detach(), reduction="sum") / latents.shape[0]
             grad = torch.autograd.grad(loss, latents, retain_graph=True)[0]
-            '''
+            grad = grad.norm()
+
+
+            target = (latents - grad).detach()
+
+            if self.train_steps <= object_params.ref_loss_nomask_until:
+                # only consider 1st image at the beginning
+                loss = F.mse_loss(latents[0], target[0], reduction='sum')
+                #'''
 
             # just for debug
-            target = (latents - grad).detach()
+            #target = (latents - grad).detach()
         else:
             # CUSTOM
-            w = (1 - self.alphas[t]).view(batch_size, 1, 1, 1)
+            #w = (1 - self.alphas[t]).view(batch_size, 1, 1, 1)
             
             # Original SDS
             #grad = w * 40.0 * (noise_pred - noise)
             #grad = w * (noise_pred - noise)
-            grad = (noise_pred - noise)
+            #grad = (noise_pred - noise)
+            grad = (noise_pred - noise) #denoised_pred
             #grad = w * (noise_pred - noise) * (1.0 + step_ratio * 4.0)
             grad = torch.nan_to_num(grad)
 
@@ -606,20 +661,26 @@ class MVDream(nn.Module):
             # x_t = a * x_0 + b * e, -> inverse: x_0 = (x_t - b * e) / a, where a = (extract_into_tensor(self.model.sqrt_alphas_cumprod, t, latents_noisy.shape), b = extract_into_tensor(self.model.sqrt_one_minus_alphas_cumprod, t, latents_noisy.shape)
             # target = x_0, latents_noisy = x_t, noise_pred = e
             target = (latents - grad).detach()
+            
             #target = ((latents_noisy - extract_into_tensor(self.model.sqrt_one_minus_alphas_cumprod, t, latents_noisy.shape) * noise_pred) / (extract_into_tensor(self.model.sqrt_alphas_cumprod, t, latents_noisy.shape))).detach()
 
             #target = self.encode_imgs(target).detach()
             #latents = self.decode_latents(latents)
             #TODO use mask as target (everything except static part)
             #if (self.train_steps % 2 != 0):
-            ref_loss_nomask_until = 50
-            if self.train_steps <= ref_loss_nomask_until:
-                # only consider 1st image at the beginning
-                loss = F.mse_loss(latents[0].float(), target[0], reduction='sum')
-            else:
-                loss = F.mse_loss(latents.float(), target, reduction='sum') #0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+            #ref_loss_nomask_until = 50
 
-            sds_loss = loss.clone().detach()
+            if self.train_steps <= object_params.ref_loss_nomask_until:
+                # only consider 1st image at the beginning
+                #loss = F.mse_loss(latents[0].float(), target[0], reduction='sum')
+                loss = F.mse_loss(latents[0].float(), latents[0].float(), reduction='sum')
+            else:
+                if (object_params.sds_loss_only):
+                    loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0] #0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
+                else:
+                    loss = F.mse_loss(latents.float(), target, reduction='sum')
+
+        sds_loss = loss.clone().detach()
             #if self.train_steps > ref_loss_nomask_until and self.train_steps % 2 != 0:
             #    loss = F.mse_loss(latents.float(), target, reduction='sum')
             #else:
@@ -630,80 +691,90 @@ class MVDream(nn.Module):
             #    loss -= 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
             #loss = F.mse_loss(latents.float(), target, reduction='sum')
 
-            # 2ND LOSS
-            static_alpha = None
-            bool_mask_images = np.zeros((4, 3, img_height, img_width))
-            bool_mask_images = torch.tensor((bool_mask_images), dtype=torch.float32).detach()
+        # 2ND LOSS
+        static_alpha = None
+        alpha_mask = None
+        bool_mask_images = np.zeros((4, 3, img_height, img_width))
+        bool_mask_images = torch.tensor((bool_mask_images), dtype=torch.float32).detach()
 
-            colored_gauss_imgs = torch.vstack((colored_gauss_imgs))
-            colored_gauss_imgs_static = torch.vstack((colored_gauss_imgs_static))
-            colored_gauss_imgs = F.interpolate(colored_gauss_imgs, (img_width, img_height), mode="bilinear", align_corners=False)
-            colored_gauss_imgs_static = F.interpolate(colored_gauss_imgs_static, (img_width, img_height), mode="bilinear", align_corners=False).detach() # target
+        colored_gauss_imgs = torch.vstack((colored_gauss_imgs))
+        colored_gauss_imgs_static = torch.vstack((colored_gauss_imgs_static))
+        colored_gauss_imgs_vis = colored_gauss_imgs.detach()
+        colored_gauss_imgs_static_vis = colored_gauss_imgs_static.detach()
+        colored_gauss_imgs = F.interpolate(colored_gauss_imgs, (img_width, img_height), mode="bilinear", align_corners=False)
+        colored_gauss_imgs_static = F.interpolate(colored_gauss_imgs_static, (img_width, img_height), mode="bilinear", align_corners=False).detach() # target
 
-            colored_gauss_imgs_alpha = torch.vstack((colored_gauss_imgs_alpha))
-            colored_gauss_imgs_static_alpha = torch.vstack((colored_gauss_imgs_static_alpha))
-            colored_gauss_imgs_alpha = F.interpolate(colored_gauss_imgs_alpha, (img_width, img_height), mode="bilinear", align_corners=False)
-            colored_gauss_imgs_static_alpha = F.interpolate(colored_gauss_imgs_static_alpha, (img_width, img_height), mode="bilinear", align_corners=False).detach() # target
+        #colored_gauss_imgs_alpha = torch.vstack((colored_gauss_imgs_alpha))
+        #colored_gauss_imgs_static_alpha = torch.vstack((colored_gauss_imgs_static_alpha))
+        #colored_gauss_imgs_alpha = F.interpolate(colored_gauss_imgs_alpha, (img_width, img_height), mode="bilinear", align_corners=False)
+        #colored_gauss_imgs_static_alpha = F.interpolate(colored_gauss_imgs_static_alpha, (img_width, img_height), mode="bilinear", align_corners=False).detach() # target
 
-            #static_depth_images = torch.vstack((static_depth_images)).unsqueeze(1)
-            #dynamic_depth_images = torch.vstack((dynamic_depth_images)).unsqueeze(1)
-            #static_depth_images = F.interpolate(static_depth_images, (img_width, img_height), mode="bilinear", align_corners=False)
-            #dynamic_depth_images = F.interpolate(dynamic_depth_images, (img_width, img_height), mode="bilinear", align_corners=False)
+        #static_depth_images = torch.vstack((static_depth_images)).unsqueeze(1)
+        #dynamic_depth_images = torch.vstack((dynamic_depth_images)).unsqueeze(1)
+        #static_depth_images = F.interpolate(static_depth_images, (img_width, img_height), mode="bilinear", align_corners=False)
+        #dynamic_depth_images = F.interpolate(dynamic_depth_images, (img_width, img_height), mode="bilinear", align_corners=False)
 
-            #target2 = dynamic_depth_images.detach()
-            reference_loss = 0
-            if (self.train_steps % 2 == 0 and only_dynamic_splats == False or self.train_steps <= ref_loss_nomask_until):
-            #if (only_dynamic_splats == False):
-                latents_dec = self.decode_latents(latents) # don't use detach() here !
-                
-                #with torch.no_grad():
-                static_images = torch.stack((static_images)).detach()
-                static_images = F.interpolate((static_images), (img_width, img_height), mode="bilinear", align_corners=False)
-                static_alpha = torch.repeat_interleave(static_images[:,3:], 3, 1)
-                static_images = static_images[:,:3]
-                if (valid_cams.shape[0] != 0):
+        #target2 = dynamic_depth_images.detach()
+        reference_loss = 0
+        if (self.train_steps % 2 == 0 and only_dynamic_splats == False or self.train_steps <= object_params.ref_loss_nomask_until):
+        #if (only_dynamic_splats == False):
+            #latents_dec = self.decode_latents(latents) # don't use detach() here !
+            
+            #with torch.no_grad():
+            static_images = torch.stack((static_images)).detach()
+            static_images_vis = static_images.detach()
+            static_images = F.interpolate((static_images), (img_width, img_height), mode="bilinear", align_corners=False)
+            static_alpha = torch.repeat_interleave(static_images[:,3:], 3, 1)
+            alpha_mask = static_alpha.detach()
+            static_images = static_images[:,:3]
+            if (valid_cams.shape[0] != 0):
 
-                    for valid_cam in valid_cams:
-                        with torch.no_grad():
-                            static_alpha = static_alpha > 0.15
-                            #static_alpha = static_region
-                            bool_mask = static_alpha[valid_cam].int()#static_region[valid_cam].int()
-                            #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
-                            #'''
-                            kernel = np.ones((3, 3), dtype=np.float32)
-                            kernel_tensor = torch.Tensor(np.expand_dims(np.expand_dims(kernel, 0), 0))
-                            bool_mask = bool_mask[:, 0].unsqueeze(0).float().cpu()
-                            #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
-                            #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
-                            #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
-                            #write_images_to_drive(bool_mask.squeeze(0), string="mask_eroded")
-                            bool_mask = bool_mask.squeeze(0).bool()
-                            bool_mask = torch.repeat_interleave(bool_mask, 3, 0)
-                            bool_mask_images[valid_cam] = bool_mask.float()
-                        
-                        if self.train_steps <= ref_loss_nomask_until: #or self.train_steps >= 300 and self.train_steps <= 350 or self.train_steps >= 600 and self.train_steps <= 650 or self.train_steps >= 1500 and self.train_steps <= 1800 :
-                            # don't use mask for the first few hundred iterations to bring the splats to move inside the existing part
-                            #loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
-                            #reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam] * static_alpha[valid_cam], colored_gauss_imgs[valid_cam] * static_alpha[valid_cam], reduction='sum').detach()
-                            #loss += F.mse_loss(colored_gauss_imgs_static[valid_cam] * static_alpha[valid_cam], colored_gauss_imgs[valid_cam] * static_alpha[valid_cam], reduction='sum')
-                            reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum').detach()
-                            loss += 2.0 * F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum')
-                            #loss += F.mse_loss(colored_gauss_imgs_static_alpha[valid_cam], colored_gauss_imgs_alpha[valid_cam], reduction='sum')
-                            #loss += F.mse_loss(static_depth_images[valid_cam], target2[valid_cam], reduction='sum')
-                        else:
-                            #loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
-                            reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum').detach()
-                            loss += 2.0 * F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum')
-                            #reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], reduction='sum').detach()
-                            #loss += F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], reduction='sum')
-                            #loss += F.mse_loss(colored_gauss_imgs_static_alpha[valid_cam, bool_mask], colored_gauss_imgs_alpha[valid_cam, bool_mask], reduction='sum')
-                            #loss += F.mse_loss(static_depth_images[valid_cam, bool_mask], target2[valid_cam, bool_mask], reduction='sum')
+                for valid_cam in valid_cams:
+                    with torch.no_grad():
+                        static_alpha = static_alpha > 0.15
+                        #static_alpha = static_region
+                        bool_mask = static_alpha[valid_cam].int()#static_region[valid_cam].int()
+                        #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
+                        #'''
+                        kernel = np.ones((3, 3), dtype=np.float32)
+                        kernel_tensor = torch.Tensor(np.expand_dims(np.expand_dims(kernel, 0), 0))
+                        bool_mask = bool_mask[:, 0].unsqueeze(0).float().cpu()
+                        bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                        bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                        #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                        #write_images_to_drive(bool_mask.squeeze(0), string="mask_eroded")
+                        bool_mask = bool_mask.squeeze(0).bool()
+                        bool_mask = torch.repeat_interleave(bool_mask, 3, 0)
+                        bool_mask_images[valid_cam] = bool_mask.float()
                     
-                    self.reference_loss_steps += 1
-                    ############# plot #####################
-                    self.sds_losses = np.append(self.sds_losses, sds_loss.item())
-                    self.reference_losses = np.append(self.reference_losses, reference_loss.item())
-                    ##########################################################
+                    if self.train_steps <= object_params.ref_loss_nomask_until: #or self.train_steps >= 300 and self.train_steps <= 350 or self.train_steps >= 600 and self.train_steps <= 650 or self.train_steps >= 1500 and self.train_steps <= 1800 :
+                        # don't use mask for the first few hundred iterations to bring the splats to move inside the existing part
+                        #loss += F.mse_loss(latents_dec[valid_cam], static_images[valid_cam], reduction='sum')
+                        #reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam] * static_alpha[valid_cam], colored_gauss_imgs[valid_cam] * static_alpha[valid_cam], reduction='sum').detach()
+                        #loss += F.mse_loss(colored_gauss_imgs_static[valid_cam] * static_alpha[valid_cam], colored_gauss_imgs[valid_cam] * static_alpha[valid_cam], reduction='sum')
+                        reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum').detach()
+                        if (not object_params.sds_loss_only):
+                            loss += object_params.ref_loss_strength * F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum')
+                            #loss += 0.0
+                        #loss += F.mse_loss(colored_gauss_imgs_static_alpha[valid_cam], colored_gauss_imgs_alpha[valid_cam], reduction='sum')
+                        #loss += F.mse_loss(static_depth_images[valid_cam], target2[valid_cam], reduction='sum')
+                    else:
+                        #loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
+                        reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum').detach()
+                        if (not object_params.sds_loss_only and self.train_steps <= object_params.max_steps_ref_loss):
+                            loss += object_params.ref_loss_strength * F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum')
+                            #loss += 0.0
+                        ##############loss += 2.0 * F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum')
+                        #reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], reduction='sum').detach()
+                        #loss += F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask] * static_alpha[valid_cam, bool_mask], reduction='sum')
+                        #loss += F.mse_loss(colored_gauss_imgs_static_alpha[valid_cam, bool_mask], colored_gauss_imgs_alpha[valid_cam, bool_mask], reduction='sum')
+                        #loss += F.mse_loss(static_depth_images[valid_cam, bool_mask], target2[valid_cam, bool_mask], reduction='sum')
+                    
+                self.reference_loss_steps += 1
+                ############# plot #####################
+                self.sds_losses = np.append(self.sds_losses, sds_loss.item())
+                self.reference_losses = np.append(self.reference_losses, reference_loss.item())
+                ##########################################################
             
             
 
@@ -727,7 +798,12 @@ class MVDream(nn.Module):
                         
                         #batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, blended_output, string=r"_batch_debug")
                         #self.batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, bool_mask_images, timelapse_img, colored_gauss_img_vis, object_params, string=r"_batch_debug")
-                        self.batch_write_images_to_drive(noisy_input, gs_renders, colored_gauss_imgs, colored_gauss_imgs_static, bool_mask_images * static_alpha.cpu(), timelapse_img, colored_gauss_img_vis, object_params, string=r"_batch_debug")
+                        self.batch_write_images_to_drive(noisy_input, gs_renders, colored_gauss_imgs, blended_output, bool_mask_images, timelapse_img, colored_gauss_img_vis, object_params, string=r"_batch_debug")
+                        self.batch_write_test_images_to_drive(pred_rgb, object_params, string=r"_optimized") # use only first image (reference view) and third image (180 degrees apart)
+                        self.batch_write_test_images_to_drive(static_images_vis, object_params, string=r"_static")
+                        self.batch_write_test_images_to_drive(colored_gauss_imgs_vis, object_params, string=r"_optimized_rg_vis")
+                        self.batch_write_test_images_to_drive(colored_gauss_imgs_static_vis, object_params, string=r"_static_rg_vis")
+                        self.batch_write_test_images_to_drive(alpha_mask, object_params, string=r"_static_mask")
                         #write_images_to_drive(static_region, string="_static_depth_images")
                         
                         print("good Horizontal angles: " + str(current_cam_hors))
@@ -761,10 +837,11 @@ class MVDream(nn.Module):
 
             img_width = input1.shape[2]
             img_height = input1.shape[3]
-            # create figure
-            figure = PIL.Image.new('RGB', (img_width * 4, img_height * 5), color=(255, 255, 255))
-            #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
             inputs = [input1, input2, input3, input4, input5]
+            # create figure
+            figure = PIL.Image.new('RGB', (img_width * 4, img_height * len(inputs)), color=(255, 255, 255))
+            #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
+            
 
             #inputs = F.interpolate((inputs), (512, 512), mode="bilinear", align_corners=False)
 
@@ -796,7 +873,8 @@ class MVDream(nn.Module):
 
             try:
                 #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
-                figure.save(str(object_params.data_path) + '/diffModelDebug.jpg')
+                figure.save(str(object_params.data_path) + '/diffModelDebug.png')
+                #figure.save(str(object_params.data_path) + '/diffModelDebug_sdsonly.png')
                 if (self.train_steps == object_params.max_steps):
                     #for x in range(0, 30):
                     #    self.timelapse_imgs.append(self.timelapse_imgs[len(self.timelapse_imgs) - 1])
@@ -829,6 +907,38 @@ class MVDream(nn.Module):
                     plt.cla()
                     plt.clf()
             
+            except OSError:
+                print("Cannot save image")
+
+    def batch_write_test_images_to_drive(self, input1, object_params, index=-1, string=""):
+
+            import PIL.Image
+
+            
+            img_width = 256 #input1.shape[2]
+            img_height = 256 #input1.shape[3]
+
+            inputs = input1
+            # create figure
+            figure = PIL.Image.new('RGB', (img_width * 2, img_height), color=(255, 255, 255))
+            #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
+
+            inputs = F.interpolate((inputs), (img_width, img_height), mode="bilinear", align_corners=False)
+
+            # add images
+            transform = T.ToPILImage()
+            image = transform(inputs[0])
+            figure.paste(image, (0 * img_width, 0 * img_height))
+
+            image = transform(inputs[2])
+            figure.paste(image, (1 * img_width, 0 * img_height))
+
+            try:
+                #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
+                dp = str(object_params.data_path)
+                name = dp.split('/')[-1] # get last element as name
+                figure.save(dp + '/' + name + string + '.png')
+                #figure.save(dp + '/' + name + string + '_sdsonly.png')
             except OSError:
                 print("Cannot save image")
          
@@ -919,3 +1029,48 @@ if __name__ == "__main__":
         # visualize image
         plt.imshow(grid)
         plt.show()
+
+
+class MomentumBuffer():
+    # https://arxiv.org/pdf/2410.02416 APG 
+    def __init__(self, momentum: float):
+        self.momentum = momentum
+        self.running_average = 0
+
+    def update(self, update_value: torch.Tensor):
+        new_average = self.momentum * self.running_average
+        self.running_average = update_value + new_average
+
+def project(
+    v0: torch.Tensor, # [B, C, H, W]
+    v1: torch.Tensor, # [B, C, H, W]
+    ):
+    dtype = v0.dtype
+    v0, v1 = v0.double(), v1.double()
+    v1 = torch.nn.functional.normalize(v1, dim=[-1, -2, -3])
+    v0_parallel = (v0 * v1).sum(dim=[-1, -2, -3], keepdim=True) * v1
+    v0_orthogonal = v0 - v0_parallel
+    return v0_parallel.to(dtype), v0_orthogonal.to(dtype)
+    
+def adaptive_projected_guidance(
+    pred_cond: torch.Tensor, # [B, C, H, W]
+    pred_uncond: torch.Tensor, # [B, C, H, W]
+    guidance_scale: float,
+    momentum_buffer: MomentumBuffer = None,
+    eta: float = 1.0,
+    norm_threshold: float = 0.0,
+    ):
+
+    diff = pred_cond - pred_uncond
+    if momentum_buffer is not None:
+        momentum_buffer.update(diff)
+        diff = momentum_buffer.running_average
+    if norm_threshold > 0:
+        ones = torch.ones_like(diff)
+        diff_norm = diff.norm(p=2, dim=[-1, -2, -3], keepdim=True)
+        scale_factor = torch.minimum(ones, norm_threshold / diff_norm)
+        diff = diff * scale_factor
+    diff_parallel, diff_orthogonal = project(diff, pred_cond)
+    normalized_update = diff_orthogonal + eta * diff_parallel
+    pred_guided = pred_cond + (guidance_scale - 1) * normalized_update
+    return pred_guided

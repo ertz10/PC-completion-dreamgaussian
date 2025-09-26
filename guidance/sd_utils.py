@@ -478,7 +478,7 @@ class StableDiffusion(nn.Module):
                         #guidance_scale *= 2.0
                     else:
                         # t ~ U(0.02, 0.50) # after gradADreamer
-                        t = torch.randint(self.min_step, int(self.max_step * 0.5) + 1, (batch_size,), dtype=torch.long, device=self.device)
+                        t = torch.randint(self.min_step, int(self.max_step * 0.4) + 1, (batch_size,), dtype=torch.long, device=self.device)
                         #guidance_scale *= 2.0
                 else:
                     t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
@@ -488,7 +488,7 @@ class StableDiffusion(nn.Module):
             # TODO remove after testing LUCID DREAMER stuff
             warm_up_rate = 1. - min(self.train_steps / object_params.warmup_iter, 1.)
             #t = torch.randint(self.min_step, self.max_step + int(self.warmup_step * warm_up_rate), (batch_size,), dtype=torch.long, generator=self.noise_gen, device=self.device)
-            t = torch.randint(self.min_step, self.max_step + int(self.warmup_step * warm_up_rate), (1,), dtype=torch.long, generator=self.noise_gen, device=self.device)
+            #t = torch.randint(self.min_step, self.max_step + int(self.warmup_step * warm_up_rate), (1,), dtype=torch.long, generator=self.noise_gen, device=self.device)
 
             # predict the noise residual with unet, NO grad!
             # After LUCID Dreamer
@@ -568,7 +568,7 @@ class StableDiffusion(nn.Module):
             # TODO which is first, noise_pred_cond or noise_pred_uncond ???? mvdream says noise_pred_uncond first
             #noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
             noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (
+            noise_pred = noise_pred_uncond + object_params.guidance_scale * (
                 noise_pred_cond - noise_pred_uncond
             )
 
@@ -658,7 +658,7 @@ class StableDiffusion(nn.Module):
                         bool_mask = torch.repeat_interleave(bool_mask, 3, 0)
                     #alphas_stat = alphas_stat[:,:3]
                     # TODO reenable
-                    loss += F.mse_loss(latents_dec[valid_cam, bool_mask].float(), static_images[valid_cam, bool_mask], reduction='sum')
+                    #loss += F.mse_loss(latents_dec[valid_cam, bool_mask].float(), static_images[valid_cam, bool_mask], reduction='sum')
 
         #CUSTOM
         if object_params.DEBUG and self.train_steps % object_params.DEBUG_VIS_INTERVAL == 0:
@@ -679,7 +679,7 @@ class StableDiffusion(nn.Module):
                         #write_images_to_drive(static_region, string="_static_depth_images")
                         
                         print("good Horizontal angles: " + str(current_cam_hors))
-                        print("guidance scale: ", guidance_scale)
+                        print("guidance scale: ", object_params.guidance_scale)
                         print("t: ", t[0])
                         print("num timesteps ", self.num_train_timesteps)
                         #print(torch.cuda.memory_summary())

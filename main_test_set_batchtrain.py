@@ -46,23 +46,32 @@ if __name__ == "__main__":
     tennis_ball = False
     flashlight = False
     leather_book = False
+    hat = False
+    sponge = False
+    coffee_mug = False
+    bread = False
+    fish = False
 
-    
-    shoe = True
-    couch = True
-    vase = True
-    elephant = True
-    hocker = True
-    banana_tuna = True
-    chicken = True # try again later, seems to build too many splats over time, reduce!
-    plant = True
-    pumpkins = True
-    knife_block = True
-    rubiks_cube = True
-    headset = True
-    tennis_ball = True
-    flashlight = True
-    leather_book = True
+    #shoe = True #new
+    #couch = True #new
+    #vase = True #new
+    #elephant = True #new
+    #hocker = True #new
+    #banana_tuna = True
+    #chicken = True # try again later, seems to build too many splats over time, reduce!
+    #plant = True
+    #pumpkins = True #new
+    #knife_block = True
+    #rubiks_cube = True #new
+    #headset = True # TODO create crop less from the original gs file
+    #tennis_ball = True
+    #flashlight = True
+    #leather_book = True########
+    #hat = True
+    #sponge = True
+    coffee_mug = True
+    #bread = True
+    #fish = True
 
 
 
@@ -71,7 +80,8 @@ if __name__ == "__main__":
     # test objects
     ########## SHOE ###############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a beige winter shoe with beige shoelaces, dark brown shoe sole, natural colors\" "
+    #prompt = "prompt=\"a beige winter shoe with beige shoelaces, dark brown shoe sole, natural colors\" "
+    prompt = "prompt=\"a DSLR foto of a bright beige winter shoe, dark brown shoe sole, natural colors, desaturated\" "
     save_path = "save_path=shoe "
     object_conf = "--object_conf=data/shoe/conf.yaml"
 
@@ -83,7 +93,7 @@ if __name__ == "__main__":
 
     ########## COUCH ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a red leather couch with three seats\" "
+    prompt = "prompt=\"a red leather couch with two seats\" "
     save_path = "save_path=couch "
     object_conf = "--object_conf=data/couch_blender/conf.yaml"
 
@@ -94,7 +104,7 @@ if __name__ == "__main__":
 
     ########## VASE ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a photo of a white matte ceramic vase with a smooth surface with a plant in it\" "
+    prompt = "prompt=\"a white matte ceramic flower pot with a smooth surface without pattern and with a plant in it\" "
     save_path = "save_path=vase "
     object_conf = "--object_conf=data/vase/conf.yaml"
 
@@ -116,7 +126,7 @@ if __name__ == "__main__":
 
     ########## HOCKER ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a photo of a square dark green footrest from ikea\" "
+    prompt = "prompt=\"a photo of a rectangular dark green footrest with microfiber material\" "
     save_path = "save_path=hocker "
     object_conf = "--object_conf=data/hocker/conf.yaml"
 
@@ -127,7 +137,7 @@ if __name__ == "__main__":
 
     ########## BANANA TUNA ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"two connected bananas and a tuna can next to them\" "
+    prompt = "prompt=\"two old bananas that are connected and a tuna can behind them\" "
     save_path = "save_path=banana_tuna "
     object_conf = "--object_conf=data/banana_tuna/conf.yaml"
 
@@ -171,7 +181,7 @@ if __name__ == "__main__":
 
     ########## KNIFE BLOCK ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a DLSR picture a dark wooden knife block with knifes in it\" "
+    prompt = "prompt=\"a DLSR picture a dark wooden kitchen knife block with knifes in it\" "
     save_path = "save_path=knife_block "
     object_conf = "--object_conf=data/knife_block/conf.yaml"
 
@@ -204,7 +214,7 @@ if __name__ == "__main__":
 
     ########## TENNIS BALL ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a photo of a tennis ball\" "
+    prompt = "prompt=\"a DLSR photo of a classic green tennis ball, desaturated\" "
     save_path = "save_path=tennis_ball "
     object_conf = "--object_conf=data/tennis_ball/conf.yaml"
 
@@ -226,11 +236,70 @@ if __name__ == "__main__":
 
     ########## LEATHER BOOK ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a book with a red leather cover with ornaments\" "
+    prompt = "prompt=\"a book with a dark red leather cover with subtle ornaments\" "
     save_path = "save_path=leather_book "
     object_conf = "--object_conf=data/leather_book/conf.yaml"
 
     command = cmd + prompt + save_path + object_conf
-    if flashlight:
+    if leather_book:
+        p = Popen(command)
+        p.communicate()
+
+    ########## Hat ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a foto of a round safari bush hat, beige color, desaturated, natural light\" "
+    save_path = "save_path=hat "
+    object_conf = "--object_conf=data/hat/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if hat:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## Sponge ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a foto of a bright yellow rectangular kitchen sponge with small pores and a small green top part\" "
+    save_path = "save_path=sponge "
+    object_conf = "--object_conf=data/sponge/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if sponge:
+        p = Popen(command)
+        p.communicate()
+
+    
+    ########## Coffee mug ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a coffee mug with noisy dark brown color, desaturated\" "
+    save_path = "save_path=coffee_mug "
+    object_conf = "--object_conf=data/coffee_mug/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if coffee_mug:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## bread ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a foto of a bread with one side cut\" "
+    save_path = "save_path=bread "
+    object_conf = "--object_conf=data/bread/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if bread:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## fish ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a fish made of ceramic with a long tail and scales, bright blue color, desaturated\" "
+    save_path = "save_path=fish "
+    object_conf = "--object_conf=data/fish/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if fish:
         p = Popen(command)
         p.communicate()

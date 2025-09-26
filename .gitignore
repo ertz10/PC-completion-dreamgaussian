@@ -21,9 +21,14 @@ images*
 
 *env*
 *.run
-data/
+
 diff-gaussian-rasterization/
 debug/
 pcd_debug.ply
 *.pcd
 *.jpg
+*.png
+*.gif
+*.avi
+tests/
+gs_ply/
