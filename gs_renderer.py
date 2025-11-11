@@ -151,7 +151,7 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int, opt_object):
+    def __init__(self, sh_degree : int, opt_object, opt_alignment=None):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         # CUSTOM
@@ -181,6 +181,7 @@ class GaussianModel:
         self.original_rotation = None
         self.customGSTransform = GaussianTransform()
         self.opt_object = opt_object
+        self.opt_alignment = opt_alignment
         self.only_dynamic_splats = opt_object.only_dynamic_splats
 
     def capture(self):
@@ -707,15 +708,15 @@ class GaussianModel:
         # Average of existing colors
         avg_col = np.mean(features_dc, axis=0).squeeze(1)#torch.mean(SH2RGB(fused_color), dim=0)
         #avg_col = RGB2SH(avg_col) * 255.0
-        #features[:, :3, 0] = torch.tensor(avg_col, dtype=torch.float, device="cuda")
-        features[:, :3, 0] = torch.tensor([0.3, 0.3, 0.3], dtype=torch.float, device="cuda")
+        features[:, :3, 0] = torch.tensor(avg_col, dtype=torch.float, device="cuda")
+        #features[:, :3, 0] = torch.tensor([0.3, 0.3, 0.3], dtype=torch.float, device="cuda")
         features[:, 3:, 1:] = 0.0
 
 
         pcd_debug = o3d.geometry.PointCloud()
         pcd_debug.points = o3d.utility.Vector3dVector(xyz)
         #pcd_debug.points = o3d.utility.Vector3dVector(xyz_full)
-        o3d.io.write_point_cloud("debug/pcd_debug_transformed.ply", pcd_debug)
+        #o3d.io.write_point_cloud("debug/pcd_debug_transformed.ply", pcd_debug)
 
         '''
         self._xyz = nn.Parameter(torch.tensor(xyz[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
@@ -778,7 +779,7 @@ class GaussianModel:
     def calculateCenterOfMass(self, xyz: np.ndarray):
             return xyz.mean(axis=0)
         
-    def load_ply(self, path, AABB, spatial_lr_scale):
+    def load_ply(self, path, AABB, spatial_lr_scale, no_transform=False, no_rotation=False, blob_init_size=None, num_pts_init=None, flip_z=False, normalize=True, transform_splats_only=False):
         import trimesh
         
         #CUSTOM
@@ -798,14 +799,22 @@ class GaussianModel:
         features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
 
         extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
+        has_extras = True
+        if (len(extra_f_names) == 0):
+            extra_f_names = ["f_rest_" + str(i) for i in range(0,45)]
+            has_extras = False
         self.max_sh_degree = 3
         assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
         #self.max_sh_degree = 0
+
+        #'''
         features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
-        for idx, attr_name in enumerate(extra_f_names):
-            features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
+        if has_extras:
+            for idx, attr_name in enumerate(extra_f_names):
+                features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
         # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
         features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+        #'''
 
         scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
         scales = np.zeros((xyz.shape[0], len(scale_names)))
@@ -825,44 +834,73 @@ class GaussianModel:
         translated_pts = xyz - centroid
         #rotation = trimesh.transformations.euler_matrix(0, 0, 180, 'sxyz')#trimesh.transformations.rotation_matrix(-110.5, [1, 0, 0], [0, 0, 0])
 
-        xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
-        opt_rots = self.opt_object.rotation
-        rotation1 = trimesh.transformations.rotation_matrix(opt_rots[0], [1, 0, 0], [0, 0, 0])
-        rotation2 = trimesh.transformations.rotation_matrix(opt_rots[1], [0, 0, 1], [0, 0, 0])
-        rotation3 = trimesh.transformations.rotation_matrix(opt_rots[2], [0, 1, 0], [0, 0, 0])
-        xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=rotation1, pivot=[0, 0, 0])
-        xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
-        xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
-        # TODO implement translation and scaling ?
-        #### SCALING
-        opt_scale = self.opt_object.scale
-        scale_mat = trimesh.transformations.scale_matrix(opt_scale, [0, 0, 0])
-        xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=scale_mat, pivot=[0, 0, 0])
-        #scales *= opt_scale
-        # scale AABB as well
-        if self.opt_object.AABB is not None:
-            AABB = np.array(AABB) * opt_scale
-        #### TRANSLATION
-        xyz += np.array(self.opt_object.translation)
         
-        rots = self.customGSTransform.rotate(rots, rotation1)
-        rots = self.customGSTransform.rotate(rots, rotation2)
-        rots = self.customGSTransform.rotate(rots, rotation3)
-        print("Point cloud normalization factor: ", norm_factor)
-        if (norm_factor >= 1.0):
-            scales = scales - np.log(norm_factor)
+        if (no_transform == False):
+            if normalize:
+                xyz, norm_factor = self.customGSTransform.normalize_PC(translated_pts)
+
+            opt_rots = self.opt_object.rotation if self.opt_alignment == None else self.opt_alignment.rotation # used for trellis
+            
+            if no_rotation == False:
+                rotation1 = trimesh.transformations.rotation_matrix(opt_rots[0], [1, 0, 0], [0, 0, 0])
+                rotation2 = trimesh.transformations.rotation_matrix(opt_rots[1], [0, 0, 1], [0, 0, 0])
+                rotation3 = trimesh.transformations.rotation_matrix(opt_rots[2], [0, 1, 0], [0, 0, 0])
+                xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=rotation1, pivot=[0, 0, 0])
+                xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=rotation2, pivot=[0, 0, 0])
+                xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=rotation3, pivot=[0, 0, 0])
+            
+            if flip_z:
+                flip_rotation = trimesh.transformations.rotation_matrix(3.14159, [0, 0, 1], [0, 0, 0])
+                xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=flip_rotation, pivot=[0, 0, 0])
+           
+            #### SCALING
+            opt_scale = self.opt_object.scale if self.opt_alignment == None else self.opt_alignment.scale # used for trellis
+            scale_mat = trimesh.transformations.scale_matrix(opt_scale, [0, 0, 0])
+            xyz = self.transform_points_around_pivot(pts=xyz, trans_matrix=scale_mat, pivot=[0, 0, 0])
+            #scales *= opt_scale
+            # scale AABB as well
+            if self.opt_object.AABB is not None:
+                AABB = np.array(AABB) * opt_scale
+            #### TRANSLATION
+            xyz += np.array(self.opt_object.translation) if self.opt_alignment == None else self.opt_alignment.translation # used for trellis<
+            
+            rots = self.customGSTransform.rotate(rots, rotation1)
+            rots = self.customGSTransform.rotate(rots, rotation2)
+            rots = self.customGSTransform.rotate(rots, rotation3)
+            if normalize:
+                print("Point cloud normalization factor: ", norm_factor)
+                if (norm_factor >= 1.0):
+                    scales = scales - np.log(norm_factor)
+                else:
+                    norm_factor += 1.0
+                    scales = scales + np.log(norm_factor)
+            #scales = scales / np.log(norm_factor)
+            # instead of adjusting the radius, adjust the object scale (and splat scale)
+            scales = scales + np.log(opt_scale) # multiply logs = log() + logs()
+        if blob_init_size is not None:
+            gs_init_scales = torch.log(torch.tensor((blob_init_size, blob_init_size, blob_init_size)))
         else:
-            norm_factor += 1.0
-            scales = scales + np.log(norm_factor)
-        #scales = scales / np.log(norm_factor)
-        # instead of adjusting the radius, adjust the object scale (and splat scale)
-        scales = scales + np.log(opt_scale) # multiply logs = log() + logs()
-        gs_init_scales = torch.log(torch.tensor(self.opt_object.dyn_gs_init_scale)) # inverse of e function, convert to exp format
+            gs_init_scales = torch.log(torch.tensor(self.opt_object.dyn_gs_init_scale)) # inverse of e function, convert to exp format
+
+        opt_rots = self.opt_object.rotation if self.opt_alignment == None else self.opt_alignment.rotation # used for trellis
+            
+        if transform_splats_only:
+            rotation1 = trimesh.transformations.rotation_matrix(opt_rots[0], [1, 0, 0], [0, 0, 0])
+            rotation2 = trimesh.transformations.rotation_matrix(opt_rots[1], [0, 0, 1], [0, 0, 0])
+            rotation3 = trimesh.transformations.rotation_matrix(opt_rots[2], [0, 1, 0], [0, 0, 0])
+            rots = self.customGSTransform.rotate(rots, rotation1)
+            rots = self.customGSTransform.rotate(rots, rotation2)
+            rots = self.customGSTransform.rotate(rots, rotation3)
+            opt_scale = self.opt_object.scale if self.opt_alignment == None else self.opt_alignment.scale # used for trellis
+            scales = scales + np.log(opt_scale) # multiply logs = log() + logs()
 
         #############################################
         ########### Init gaussian blob ##############
         #############################################
-        num_pts = self.opt_object.num_pts_init # TODO hardcoded at the moment, not good
+        if num_pts_init is not None:
+            num_pts = num_pts_init
+        else:
+            num_pts = self.opt_object.num_pts_init
 
         if self.opt_object.init_sphere_radius is not None:
             radius = self.opt_object.init_sphere_radius
@@ -871,7 +909,15 @@ class GaussianModel:
 
         # remove big splats
         xyz, rots, scales, opacities, features_dc, features_extra = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc, features_extra)
+        #xyz, rots, scales, opacities, features_dc = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc)
 
+        pcd_debug = o3d.geometry.PointCloud()
+        pcd_debug.points = o3d.utility.Vector3dVector(xyz)
+        #pcd_debug.points = o3d.utility.Vector3dVector(xyz_full)
+        #out_path = path.split('/')
+        o3d.io.write_point_cloud(self.opt_object.data_path + "/" + self.opt_object.data_path.split('/')[-1] + "_transformed.ply", pcd_debug)
+
+        
         if self.opt_object.AABB is None:
             # radius depending on bounding box of object
             delta_x = np.abs(np.max(xyz[0])) + np.abs(np.min(xyz[0]))
@@ -945,15 +991,13 @@ class GaussianModel:
         features[:, 3:, 1:] = 0.0
 
 
-        pcd_debug = o3d.geometry.PointCloud()
-        pcd_debug.points = o3d.utility.Vector3dVector(xyz)
-        #pcd_debug.points = o3d.utility.Vector3dVector(xyz_full)
-        o3d.io.write_point_cloud("debug/pcd_debug_transformed.ply", pcd_debug)
-
+        
         #features_dc[mask_subsampled == 1] = features[mask_subsampled == 1, :, 0:1].cpu().numpy()
         #features_extra[mask_subsampled == 1] = features[mask_subsampled == 1, :, 1:].cpu().numpy()
         features_dc = np.vstack((features[0:len(xyz_2), :, 0:1].cpu().numpy(), features_dc))
+        #'''
         features_extra = features[:,:,1:].cpu().numpy() #np.vstack((features[0:len(xyz_2), :, 1:].cpu().numpy(), features_extra)) # TODO omit SH coefficients
+        #'''
         # TODO TEST #
         #features_dc = features[:, :, 0:1]
         #features_extra = features[:, :, 1:]
@@ -961,6 +1005,7 @@ class GaussianModel:
         self._features_dc = nn.Parameter(torch.tensor(features_dc[mask_subsampled == 1], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         # TODO try to scrap features_rest
         self._features_rest = nn.Parameter(torch.tensor(features_extra[mask_subsampled == 1], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        #self._features_rest = nn.Parameter(torch.tensor(features_dc[mask_subsampled == 1], dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots[mask_subsampled == 1], dtype=torch.float, device="cuda").requires_grad_(True))
@@ -986,6 +1031,7 @@ class GaussianModel:
         self.original_xyz = torch.tensor(xyz[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
         self.original_featuresdc = torch.tensor(features_dc[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
         self.original_features_rest = torch.tensor(features_extra[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
+        #self.original_features_rest = torch.tensor(features_dc[mask_subsampled == 0], dtype=torch.float, device="cuda").transpose(1,2).contiguous().requires_grad_(False)
         self.original_opacity = torch.tensor(opacities[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
         self.original_scaling = torch.tensor(scales[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
         self.original_rotation = torch.tensor(rots[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
@@ -1362,13 +1408,13 @@ class MiniCam:
 
 class Renderer:
     # CUSTOM
-    def __init__(self, sh_degree=3, white_background=True, radius=1, opt_object=None):
+    def __init__(self, sh_degree=3, white_background=True, radius=1, opt_object=None, opt_alignment=None):
         
         self.sh_degree = sh_degree
         self.white_background = white_background
         self.radius = radius
 
-        self.gaussians = GaussianModel(sh_degree, opt_object)
+        self.gaussians = GaussianModel(sh_degree, opt_object, opt_alignment=opt_alignment)
 
         self.bg_color = torch.tensor(
             [1, 1, 1] if white_background else [0, 0, 0],
@@ -1376,7 +1422,7 @@ class Renderer:
             device="cuda",
         )
     
-    def initialize(self, input=None, num_pts=5000, radius=0.5, AABB=np.array((0, 1, 0, 1, 0, 1)), spatial_lr_scale=1):
+    def initialize(self, input=None, num_pts=5000, radius=0.5, AABB=np.array((0, 1, 0, 1, 0, 1)), spatial_lr_scale=1, no_transform=False, no_rotation=False, blob_init_size=None, num_pts_init=None, flip_z=False, normalize=True, transform_splats_only=False):
         # load checkpoint
         if input is None:
             # init from random point cloud
@@ -1404,7 +1450,7 @@ class Renderer:
             self.gaussians.create_from_pcd(input, 1)
         else:
             # load from saved ply
-            self.gaussians.load_ply(input, AABB, spatial_lr_scale=spatial_lr_scale)
+            self.gaussians.load_ply(input, AABB, spatial_lr_scale=spatial_lr_scale, no_transform=no_transform, no_rotation=no_rotation, blob_init_size=blob_init_size, num_pts_init=num_pts_init, flip_z=flip_z, normalize=normalize, transform_splats_only=transform_splats_only)
 
     def initialize_static_and_dynamic(self, input=None, original_file_path=None, spatial_lr_scale=1):
         self.gaussians.load_static_and_dynamic_ply(input, original_file_path, spatial_lr_scale=spatial_lr_scale)

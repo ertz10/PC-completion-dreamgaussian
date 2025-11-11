@@ -32,3 +32,8 @@ pcd_debug.ply
 *.avi
 tests/
 gs_ply/
+
+*_final.ply
+metrics/
+BACKUPS/
+baselines/

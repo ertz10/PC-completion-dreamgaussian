@@ -65,8 +65,8 @@ W: 800
 ### Gaussian splatting
 num_pts: 40_000
 sh_degree: 0 #default 0 
-position_lr_init:           0.001 #0.00016 #default 0.001 #CHANGED 0.00016 lucid dreamer
-position_lr_final:          0.00002 #0.0000016 #default 0.00002 #0.0000016 after GradeADreamer
+position_lr_init:           0.001 #0.00025 #0.001 #0.00016 #default 0.001 #CHANGED 0.00016 lucid dreamer
+position_lr_final:          0.00002 #0.000005 #0.00002 #0.0000016 #default 0.00002 #0.0000016 after GradeADreamer
 position_lr_delay_mult:     0.01 #0.01 # default 0.02 #0.01 lucid dreamer
 position_lr_max_steps:      300 #300 #2500 #600 #default 300  # 30000 lucid
 feature_lr:                 0.005 #0.005 #default 0.01, #0.005 after GradeADreamer
@@ -82,8 +82,9 @@ density_end_iter:           1500 #1500 #default 3000
 #CUSTOM default 50
 densification_interval:     100 #default 50, #55 after GradeADreamer
 opacity_reset_interval:     350 # 350 #default 700, #500 after GradeADreamer # 350 after our method
-opacity_reset_start_iter:   0
+opacity_reset_start_iter:   1000
 densify_grad_threshold:     0.00075 #0.00075 #default 0.01
+use_recon_loss: False
 
 # pcd completion
 captured_camera_angles_only_until: 500

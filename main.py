@@ -391,7 +391,9 @@ class GUI:
                 #hor = np.random.randint(-180, 180)
                 #hor = np.random.randint(0, 360)
                 #CUSTOM
+                
                 # TODO sample known angles more often
+                '''
                 if (self.step <= self.opt.captured_camera_angles_only_until or (self.step % 3 == 0 and self.opt_object.only_dynamic_splats == False)):
                     angle1 = self.opt_object.visible_angles[0]
                     angle2 = self.opt_object.visible_angles[1]
@@ -408,14 +410,18 @@ class GUI:
                     #hor = int((360.0 / self.opt.iters) * self.step - 180.0)
                     #hor = int((360.0 / self.opt.iters) * self.step)
                     hor = np.random.randint(0, 360)
+                    '''
+                hor = np.random.randint(0, 360)
 
-                radius = 0.0#-1.25
+                #radius = 0.0#-1.25
+                radius = np.random.uniform(0, 1) - 0.5 #0.75#-1.25
 
                 # CUSTOM
                 if (self.step == self.opt_object.max_steps):
                     #pose = orbit_camera(10, 0, self.opt.radius + radius)
                     ver = -20
                     hor = self.opt_object.reference_angle_hor #0
+                    radius = 0
                 pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
                 
                 # TODO maybe change hor to -180 to 180 for pose only ?
@@ -596,13 +602,13 @@ class GUI:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), debug_color_image["image"].unsqueeze(0), colored_images, colored_images_static, colored_images_alpha, colored_images_static_alpha, poses, self.customLoss, guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, 
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
                                                                                                                                                                                 dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
-                                                                                                                                                                                current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, 
+                                                                                                                                                                                current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, use_recon_loss=self.opt.use_recon_loss, 
                                                                                                                                                                                 only_dynamic_splats=self.opt_object.only_dynamic_splats)
                 else:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, customLoss=self.customLoss,
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
                                                                                                                                                                                 dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
-                                                                                                                                                                                current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, 
+                                                                                                                                                                                current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, use_recon_loss=self.opt.use_recon_loss,
                                                                                                                                                                                 only_dynamic_splats=self.opt_object.only_dynamic_splats)
 
             #if self.enable_zero123:
@@ -621,7 +627,7 @@ class GUI:
             ##############################################################
 
             # optimize step
-            #loss = loss / 1.0
+            #loss = loss / 100.0
             loss.backward()
             # CUSTOM this is where gaussian pos change happens, optimizer step
             self.optimizer.step()
@@ -908,7 +914,8 @@ class GUI:
 
         else:
             #path = os.path.join(self.opt.outdir, self.opt.save_path + '_model' + str(index) + '.ply')
-            path = os.path.join(self.opt.outdir, self.opt.save_path + '_model.ply')
+            #path = os.path.join(self.opt.outdir, self.opt.save_path + '_model.ply')
+            path = os.path.join(self.opt_object.data_path + '/' + self.opt_object.data_path.split('/')[-1] + '_final.ply')
             self.renderer.gaussians.save_ply(path)
 
         print(f"[INFO] save model to {path}.")

@@ -15,14 +15,14 @@ load: "data/headset/headset_cropped_2_cleaned.ply"
 
 num_pts_init: 5_000
 
-max_steps: 5000 # ATTENTION: change in text_mv.yaml as well
+max_steps: 6000 # ATTENTION: change in text_mv.yaml as well
 max_steps_refine: 5000 # ATTENTION: change in text.yaml as well
 max_steps_tex_refine: 2000
 batch_size_tex_refine: 1
 guidance_scale: 15.0
 
-max_steps_ref_loss: 2500
-ref_loss_nomask_until: 50
+max_steps_ref_loss: 4000
+ref_loss_nomask_until: 50 # mostly trains opacity => background opacity ~ 0
 ref_loss_strength: 2.0 # must be > 0
 
 position_lr_factor: 10
@@ -31,7 +31,7 @@ reference_angle_h: 60
 reference_angle_v: -15
 
 # guidance rescale
-guidance_rescale: 1.0 #https://arxiv.org/pdf/2305.08891.pdf
+guidance_rescale: 0.7 #https://arxiv.org/pdf/2305.08891.pdf
 #
 
 # For testing purposes (set True for practically running the vanilla method)

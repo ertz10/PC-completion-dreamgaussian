@@ -52,26 +52,26 @@ if __name__ == "__main__":
     bread = False
     fish = False
 
-    #shoe = True #new
-    #couch = True #new
-    #vase = True #new
-    #elephant = True #new
-    #hocker = True #new
-    #banana_tuna = True
-    #chicken = True # try again later, seems to build too many splats over time, reduce!
-    #plant = True
-    #pumpkins = True #new
-    #knife_block = True
-    #rubiks_cube = True #new
-    #headset = True # TODO create crop less from the original gs file
-    #tennis_ball = True
+    shoe = True #new
+    couch = True #new
+    vase = True #new
+    elephant = True #new
+    hocker = True #new
+    banana_tuna = True
+    chicken = True # try again later, seems to build too many splats over time, reduce!
+    plant = True
+    pumpkins = True #new
+    knife_block = True
+    rubiks_cube = True #new
+    headset = True # TODO create crop less from the original gs file
+    #tennis_ball = True # CHECKPOINT
     #flashlight = True
-    #leather_book = True########
-    #hat = True
-    #sponge = True
+    leather_book = True########
+    hat = True
+    sponge = True
     coffee_mug = True
-    #bread = True
-    #fish = True
+    bread = True
+    fish = True
 
 
 
@@ -80,8 +80,9 @@ if __name__ == "__main__":
     # test objects
     ########## SHOE ###############
     cmd = "python main.py --config configs/text_mv.yaml "
-    #prompt = "prompt=\"a beige winter shoe with beige shoelaces, dark brown shoe sole, natural colors\" "
-    prompt = "prompt=\"a DSLR foto of a bright beige winter shoe, dark brown shoe sole, natural colors, desaturated\" "
+    prompt = "prompt=\"a beige winter shoe with beige shoelaces, dark brown shoe sole, natural colors\" "
+    #prompt = "prompt=\"a DSLR foto of a bright beige winter shoe, dark brown shoe sole, natural colors, desaturated\" "
+    #prompt = "prompt=\"desaturated\" "
     save_path = "save_path=shoe "
     object_conf = "--object_conf=data/shoe/conf.yaml"
 
@@ -115,7 +116,7 @@ if __name__ == "__main__":
 
     ########## ELEPHANT ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a pure white knitted toy elephant with two ears\" "
+    prompt = "prompt=\"a white knitted plush elephant with two ears\" "
     save_path = "save_path=elephant "
     object_conf = "--object_conf=data/elephant/conf.yaml"
 
@@ -126,7 +127,7 @@ if __name__ == "__main__":
 
     ########## HOCKER ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"a photo of a rectangular dark green footrest with microfiber material\" "
+    prompt = "prompt=\"a photo of a rectangular dark green footrest made of microfiber cloth\" "
     save_path = "save_path=hocker "
     object_conf = "--object_conf=data/hocker/conf.yaml"
 
@@ -137,7 +138,7 @@ if __name__ == "__main__":
 
     ########## BANANA TUNA ##############
     cmd = "python main.py --config configs/text_mv.yaml "
-    prompt = "prompt=\"two old bananas that are connected and a tuna can behind them\" "
+    prompt = "prompt=\"two old bananas that are connected and a tuna can\" "
     save_path = "save_path=banana_tuna "
     object_conf = "--object_conf=data/banana_tuna/conf.yaml"
 
