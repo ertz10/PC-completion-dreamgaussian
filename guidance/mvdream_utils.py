@@ -400,10 +400,12 @@ class MVDream(nn.Module):
         dynamic_depth_images=None,
         static_depth_images=None,
         current_cam_hors=[0, 0, 0, 0],
-        captured_angles_hor=[0, 0],
+        captured_angles_hor=None,
         object_params=None,
         use_recon_loss=True,
         only_dynamic_splats=False,
+        AABBimages=None,
+        AABBimagesalpha=None
     ):
 
         self.train_steps += 1
@@ -441,11 +443,21 @@ class MVDream(nn.Module):
             t = torch.randint(self.min_step, self.max_step + 1, (real_batch_size,), dtype=torch.long, device=self.device).repeat(4)
 
         '''
-        no_schedule = True
+        no_schedule = False
         if no_schedule:
             t = torch.randint(self.min_step, self.max_step + 1, (1,), dtype=torch.long, device=self.device).repeat(4)
         else:
+            '''
+            if self.train_steps <= 3000:
+                t = torch.randint(self.min_step, int(self.max_step * 0.8) + 1, (batch_size,), dtype=torch.long, device=self.device)
+            else:
+                t = torch.randint(self.min_step, int(self.max_step * 0.5) + 1, (batch_size,), dtype=torch.long, device=self.device)
+                '''
+
             #'''
+            #######################################################
+            ########## PAPER READY SCHEDULE, DON'T CHANGE #########
+            #######################################################
             if step_ratio is not None:
                 max_linear_anneal_iters = 1000
                 if self.train_steps <= max_linear_anneal_iters:
@@ -550,23 +562,22 @@ class MVDream(nn.Module):
             # CHECK if first camera angle is in a "good" angle, such that we can overlay the static part completely
             current_cam_hors = torch.FloatTensor(current_cam_hors)#
             print(current_cam_hors.shape)
-            print(captured_angles_hor[0])
+            print(captured_angles_hor)
             #valid_cams = torch.ge(current_cam_hors, captured_angles_hor[0])
-            valid_cams = np.zeros(4)
-            if (captured_angles_hor[0] > captured_angles_hor[1]):
-                for i in range(0, 4):
-                    if (current_cam_hors[i] > captured_angles_hor[1]):
-                        isTrue = current_cam_hors[i] >= captured_angles_hor[0]
-                        if (isTrue):
-                            valid_cams[i] = 1#np.append(valid_cams, i)
-                    else:
-                        valid_cams[i] = 1#np.append(valid_cams, i)
-                valid_cams = torch.from_numpy(valid_cams)
-            else:
-                valid_cams = torch.logical_and(current_cam_hors >= captured_angles_hor[0], current_cam_hors <= captured_angles_hor[1]) #and current_cam_hors <= captured_angles_hor[1]
+            valid_cams = torch.zeros(4)
+            for interval in captured_angles_hor:
+                print("INTERVAL: " + str(interval))
+
+                first = current_cam_hors >= interval[0]
+                second = current_cam_hors <= interval[1]
+                if interval[0] > interval[1]: # if first value is bigger than second e.g. [340, 20]
+                    inInterval = torch.logical_or(first, second)
+                else: # e.g.[40, 120]
+                    inInterval = torch.logical_and(first, second)
+                valid_cams = torch.logical_or(valid_cams, inInterval)
+
             valid_cams = valid_cams.nonzero() # get indices+
             #valid_cams = torch.FloatTensor(valid_cams)
-            print("valid cams shape: " + str(valid_cams))
             print("VALID CAMS: " + str(valid_cams))
             print("Current cam HORS: " + str(current_cam_hors))
         
@@ -717,9 +728,9 @@ class MVDream(nn.Module):
 
         #target2 = dynamic_depth_images.detach()
         reference_loss = 0
-        '''
-        #if (self.train_steps % 2 == 0 and only_dynamic_splats == False or self.train_steps <= object_params.ref_loss_nomask_until):
-        if (self.train_steps <= object_params.ref_loss_nomask_until): # NO PRESERVE LOSS
+        #'''
+        if (self.train_steps % 2 == 0 and only_dynamic_splats == False or self.train_steps <= object_params.ref_loss_nomask_until):
+        #if (self.train_steps <= object_params.ref_loss_nomask_until): # NO PRESERVE LOSS
         #if (only_dynamic_splats == False):
             #latents_dec = self.decode_latents(latents) # don't use detach() here !
             
@@ -730,20 +741,42 @@ class MVDream(nn.Module):
             static_alpha = torch.repeat_interleave(static_images[:,3:], 3, 1)
             alpha_mask = static_alpha.detach()
             static_images = static_images[:,:3]
+
+            static_depth_images = torch.vstack((static_depth_images))
+            AABBimages = torch.vstack((AABBimages))
+            AABBimagesalpha = torch.vstack((AABBimagesalpha))
             if (valid_cams.shape[0] != 0):
 
                 for valid_cam in valid_cams:
+                    print("VALID CAM: " + str(valid_cam))
                     with torch.no_grad():
+                        # TODO compare aabbdepth and static depth
+                        print("AABB depth min max: ", AABBimages.min(), AABBimages.max())
+                        print("AABB data type: ", AABBimages.dtype)
+                        print("static depth images min max: ", static_depth_images.min(), static_depth_images.max())
+                        depth_compare = AABBimages < static_depth_images # bool mask
+                        depth_compare = F.interpolate(depth_compare.float(), (img_width, img_height), mode="bilinear", align_corners=False)
+                        depth_compare = torch.repeat_interleave(depth_compare, 3, 1)
+                        box_mask = AABBimagesalpha > 0.0 # take alpha channel only
+                        box_mask = F.interpolate(box_mask.float(), (img_width, img_height), mode="bilinear", align_corners=False)
+                        box_mask = torch.repeat_interleave(box_mask, 3, 1)
                         static_alpha = static_alpha > 0.15
+                        #static_alpha[depth_compare.int().bool()] = 1.0 #0.0
+                        
                         #static_alpha = static_region
-                        bool_mask = static_alpha[valid_cam].int()#static_region[valid_cam].int()
+                        #bool_mask = torch.logical_and(static_alpha, box_mask)[valid_cam].int() # static_alpha[valid_cam].int()
+                        #bool_mask = torch.logical_and(static_alpha, depth_compare)[valid_cam].int().float() # static_alpha[valid_cam].int()
+                        #bool_mask = torch.subtract(box_mask, bool_mask)[valid_cam].int() # subtract difference from original box mask
+                        box_mask = torch.logical_and(box_mask, depth_compare).int().float() # basically subtract the cutout parts from the box mask
+                        # TODO  add or subtract ?= from static alpha ?
+                        bool_mask = torch.subtract(static_alpha.int(), box_mask.int())[valid_cam].clamp(0, 1)
                         #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
                         #
                         kernel = np.ones((3, 3), dtype=np.float32)
                         kernel_tensor = torch.Tensor(np.expand_dims(np.expand_dims(kernel, 0), 0))
                         bool_mask = bool_mask[:, 0].unsqueeze(0).float().cpu()
-                        bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
-                        bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                        #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
+                        #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
                         #bool_mask = 1 - torch.clamp(torch.nn.functional.conv2d(1 - bool_mask, kernel_tensor, padding=(1,1)), 0, 1)
                         #write_images_to_drive(bool_mask.squeeze(0), string="mask_eroded")
                         bool_mask = bool_mask.squeeze(0).bool()
@@ -791,9 +824,15 @@ class MVDream(nn.Module):
                         #self.batch_write_images_to_drive(noisy_input, gs_renders, target_debug, latent_output, bool_mask_images, timelapse_img, colored_gauss_img_vis, object_params, string=r"_batch_debug")
                         self.batch_write_images_to_drive(noisy_input, gs_renders, colored_gauss_imgs, blended_output, bool_mask_images, timelapse_img, colored_gauss_img_vis, object_params, string=r"_batch_debug")
                         self.batch_write_test_images_to_drive(pred_rgb, object_params, string=r"_optimized") # use only first image (reference view) and third image (180 degrees apart)
-                        #self.batch_write_test_images_to_drive(static_images_vis, object_params, string=r"_static")
+                        self.batch_write_test_images_to_drive(static_images_vis, object_params, string=r"_static")
                         self.batch_write_test_images_to_drive(colored_gauss_imgs_vis, object_params, string=r"_optimized_rg_vis")
                         self.batch_write_test_images_to_drive(colored_gauss_imgs_static_vis, object_params, string=r"_static_rg_vis")
+                        self.batch_write_test_images_to_drive(static_depth_images, object_params, string=r"_depth_static")
+                        self.batch_write_test_images_to_drive(AABBimages, object_params, string=r"_AABB")
+                        #self.batch_write_test_images_to_drive(depth_compare, object_params, string=r"_depth_compare")
+                        self.batch_write_test_images_to_drive(static_alpha.float(), object_params, string=r"_static_alpha")
+                        #self.batch_write_test_images_to_drive(box_mask, object_params, string=r"_box_mask")
+                        #self.batch_write_test_images_to_drive(bool_mask_images, object_params, string=r"_bool_mask")
                         #self.batch_write_test_images_to_drive(alpha_mask, object_params, string=r"_static_mask")
                         #write_images_to_drive(static_region, string="_static_depth_images")
                         
@@ -831,6 +870,7 @@ class MVDream(nn.Module):
             inputs = [input1, input2, input3, input4, input5]
             # create figure
             figure = PIL.Image.new('RGB', (img_width * 4, img_height * len(inputs)), color=(255, 255, 255))
+            # TODO scale float between min max -> convert to 8 bit
             #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
             
 
@@ -913,8 +953,11 @@ class MVDream(nn.Module):
             # create figure
             figure = PIL.Image.new('RGB', (img_width * 2, img_height), color=(255, 255, 255))
             #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
-
+            
+            # convert float32 to uint8 first, might be the cause of artifacts in depth maps ?
             inputs = F.interpolate((inputs), (img_width, img_height), mode="bilinear", align_corners=False)
+            inputs = (inputs - inputs.min()) / (inputs.max() - inputs.min()) * 255
+            inputs = inputs.to(torch.uint8)
 
             # add images
             transform = T.ToPILImage()

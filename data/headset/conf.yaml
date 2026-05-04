@@ -11,7 +11,7 @@ scale: 1.0
 dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: "data/headset"
-load: "data/headset/headset_cropped_2_cleaned.ply"
+load: "data/headset/headset_cropped.ply"
 
 num_pts_init: 5_000
 

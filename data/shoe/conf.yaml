@@ -8,11 +8,11 @@ reference_angle_ver:  -15 #an estimated angle at which the object was captured (
 # transformations
 rotation: [1.8, -0.75, -1.7]
 translation: [0.0, 0.0, 0.0] 
-scale: 2.0
+scale: 2.0 #2
 dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: "data/shoe"
-load: "data/shoe/shoe_cropped_v2.ply"
+load: "data/shoe/shoe_cropped.ply"
 
 num_pts_init: 5_000
 

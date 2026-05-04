@@ -84,8 +84,11 @@ class AABBLoss:
         translation_mat = trimesh.transformations.translation_matrix((0.0, 0.0, 0.0))
         BBoxMesh.apply_transform(translation_mat)
 
+        import math
+
+
         import pyglet
-        pyglet.options["headless"] = True
+        pyglet.options["headless"] = False
 
         # depth, height, width
         #box_mesh = trimesh.primitives.Box(extents=np.array([box_depth, box_height, box_width]), mutable=True)
@@ -99,13 +102,18 @@ class AABBLoss:
             try:
                 transformations = trimesh.transformations.decompose_matrix(currentCam.world_view_transform.cpu().detach())
                 rotation = transformations[2] # gets Euler angles around x,y,z axes
-                import math
                 camera = scene.set_camera(angles=(rotation[0], rotation[1], rotation[2]), distance=radius, center=(0.0, 0.0, 0.0), fov=(math.degrees(currentCam.FoVx), math.degrees(currentCam.FoVy)))
                 
+                #scene.show()
                 #file_name = "debug/AABB_rendering_debug.png"
+                
                 img = scene.save_image(resolution=(currentCam.image_width, currentCam.image_height), visible=True)
+                #img = [512, 512]
+                
                 import io
+                
                 imageArr = PIL.Image.open(io.BytesIO(img))
+                #imageArr = PIL.Image.open(img)
                 trans = T.Compose([T.ToTensor()]) # transform to tensor in [0,1] range
                 imageArr = trans(imageArr)
                 # reshape to match (1, 3, resx, resy)
@@ -118,6 +126,7 @@ class AABBLoss:
                 imageArr = torch.unsqueeze(imageArr, 0)
                 return imageArr
                 #self.write_capture_to_drive(img)
+                
             except BaseException as E:
                 print("Unable to save AABB rendering image!", str(E))
             

@@ -11,7 +11,7 @@ scale: 1.8
 dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: "data/rubiks_cube"
-load: "data/rubiks_cube/rubiks_cube_cropped_2.ply"
+load: "data/rubiks_cube/rubiks_cube_cropped.ply"
 
 num_pts_init: 5_000
 

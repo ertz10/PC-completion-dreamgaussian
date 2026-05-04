@@ -11,6 +11,10 @@ from diff_gaussian_rasterization import (
     GaussianRasterizationSettings,
     GaussianRasterizer,
 )
+#from diff_gaussian_rasterization_depth import (
+#    GaussianRasterizationSettings,
+#    GaussianRasterizer,
+#)
 from simple_knn._C import distCUDA2
 
 from sh_utils import eval_sh, SH2RGB, RGB2SH
@@ -779,7 +783,7 @@ class GaussianModel:
     def calculateCenterOfMass(self, xyz: np.ndarray):
             return xyz.mean(axis=0)
         
-    def load_ply(self, path, AABB, spatial_lr_scale, no_transform=False, no_rotation=False, blob_init_size=None, num_pts_init=None, flip_z=False, normalize=True, transform_splats_only=False):
+    def load_ply(self, isRawPCD, path, AABB, spatial_lr_scale, no_transform=False, no_rotation=False, blob_init_size=None, num_pts_init=None, flip_z=False, normalize=True, transform_splats_only=False):
         import trimesh
         
         #CUSTOM
@@ -789,14 +793,33 @@ class GaussianModel:
         xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
                         np.asarray(plydata.elements[0]["y"]),
                         np.asarray(plydata.elements[0]["z"])),  axis=1)
-        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+        if isRawPCD: # loading a normal point cloud
+            opacities = inverse_sigmoid(torch.ones((xyz.shape[0], 1), dtype=torch.float, device="cuda") * 0.9).cpu().numpy()
+        else:
+            opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+
 
         print("Number of points at loading : ", xyz.shape[0])
 
         features_dc = np.zeros((xyz.shape[0], 3, 1))
-        features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
-        features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
-        features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+        if isRawPCD: # normal point cloud
+            # convert ply red, green, blue to f_dc_... red=f_dc_0, green=f_dc_1, blue=f_dc_2
+            # rgb[0;1] = 0.5 + C_0 * f_dc_... where C_0 = 0.28209479177387814 (0th order spherical harmonic coeff 1/sqrt(4*pi))
+            # rgb[0;255] = rgb[0;1] * 255
+
+            # f_dc_1 = (rgb - 0.5) / C_0
+            C_0 = 1/np.sqrt(4.0*np.pi)
+            print("red: ", np.asarray(plydata.elements[0]["red"]))
+            print("green: ", np.asarray(plydata.elements[0]["green"]))
+            print("blue: ", np.asarray(plydata.elements[0]["blue"]))
+            features_dc[:, 0, 0] = (np.asarray(plydata.elements[0]["red"])/255 - 0.5) / C_0 
+            features_dc[:, 1, 0] = (np.asarray(plydata.elements[0]["green"])/255 - 0.5) / C_0 
+            features_dc[:, 2, 0] = (np.asarray(plydata.elements[0]["blue"])/255 - 0.5) / C_0 
+        else: 
+            features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
+            features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
+            features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+            
 
         extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
         has_extras = True
@@ -816,15 +839,20 @@ class GaussianModel:
         features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
         #'''
 
-        scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
-        scales = np.zeros((xyz.shape[0], len(scale_names)))
-        for idx, attr_name in enumerate(scale_names):
-            scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
+        if isRawPCD:
+            init_scales = torch.log(torch.tensor((0.001, 0.001, 0.001)))
+            scales = np.repeat([init_scales], len(xyz), axis = 0)
+            rots = np.repeat([[1, 0, 0, 0]], len(xyz), axis = 0)
+        else:
+            scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
+            scales = np.zeros((xyz.shape[0], len(scale_names)))
+            for idx, attr_name in enumerate(scale_names):
+                scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
-        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
-        rots = np.zeros((xyz.shape[0], len(rot_names)))
-        for idx, attr_name in enumerate(rot_names):
-            rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
+            rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
+            rots = np.zeros((xyz.shape[0], len(rot_names)))
+            for idx, attr_name in enumerate(rot_names):
+                rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
         #CUSTOM apply rigid transformation to xyz
         #rotation = R.from_euler('zyx', [-92.5, 0, -110.5], degrees=True)
@@ -908,7 +936,7 @@ class GaussianModel:
             radius = 0.75       
 
         # remove big splats
-        xyz, rots, scales, opacities, features_dc, features_extra = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc, features_extra)
+        #xyz, rots, scales, opacities, features_dc, features_extra = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc, features_extra)
         #xyz, rots, scales, opacities, features_dc = self.PreprocessCloud(xyz, rots, scales, opacities, features_dc)
 
         pcd_debug = o3d.geometry.PointCloud()
@@ -918,7 +946,8 @@ class GaussianModel:
         o3d.io.write_point_cloud(self.opt_object.data_path + "/" + self.opt_object.data_path.split('/')[-1] + "_transformed.ply", pcd_debug)
 
         
-        if self.opt_object.AABB is None:
+        #if self.opt_object.AABB is None:
+        if self.opt_object.AABBCenter is None:
             # radius depending on bounding box of object
             delta_x = np.abs(np.max(xyz[0])) + np.abs(np.min(xyz[0]))
             delta_y = np.abs(np.max(xyz[1])) + np.abs(np.min(xyz[1]))
@@ -950,16 +979,20 @@ class GaussianModel:
         else:
             # TODO instead of sphere, do cube sampling
             #'''
-            x = np.random.uniform(low=AABB[0], high=AABB[1], size=num_pts)
-            y = np.random.uniform(low=AABB[2], high=AABB[3], size=num_pts)
-            z = np.random.uniform(low=AABB[4], high=AABB[5], size=num_pts)
+            BBCenter = self.opt_object.AABBCenter
+            BBScale = self.opt_object.AABBScale
+            x = np.random.uniform(low=BBCenter[0]-BBScale[0]/2.0, high=BBCenter[0]+BBScale[0]/2.0, size=num_pts)
+            y = np.random.uniform(low=BBCenter[1]-BBScale[1]/2.0, high=BBCenter[1]+BBScale[1]/2.0, size=num_pts)
+            z = np.random.uniform(low=BBCenter[2]-BBScale[2]/2.0, high=BBCenter[2]+BBScale[2]/2.0, size=num_pts)
             #'''
         xyz_2 = np.stack((x, y, z), axis=1)
+
+        print("XYZ_2: ", xyz_2.shape)
 
         #xyz[mask_subsampled.astype(int) == 1] = xyz_2
         xyz = np.vstack((xyz_2, xyz))
         #temp_opacities = inverse_sigmoid(0.1 * torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda")).cpu().numpy()
-        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.01).cpu().numpy()
+        temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.1).cpu().numpy()
         #temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.1).cpu().numpy()
         #temp_opacities = inverse_sigmoid(torch.ones((xyz_2.shape[0], 1), dtype=torch.float, device="cuda") * 0.25).cpu().numpy()
         # TODO FILTER OUT INF VALUES, and NAN ?!!
@@ -990,7 +1023,9 @@ class GaussianModel:
         #features[:, :3, 0] = torch.tensor([0.1, 0.1, 0.1], dtype=torch.float, device="cuda")
         features[:, 3:, 1:] = 0.0
 
-
+        #scales = np.repeat([(-1, -1, -1)], len(xyz), axis=0)
+        print("MEAN SCALE: " + str(np.mean(scales)))
+        print("MEAN OPACITIES: " + str(np.mean(opacities)))
         
         #features_dc[mask_subsampled == 1] = features[mask_subsampled == 1, :, 0:1].cpu().numpy()
         #features_extra[mask_subsampled == 1] = features[mask_subsampled == 1, :, 1:].cpu().numpy()
@@ -1151,6 +1186,8 @@ class GaussianModel:
         self.original_scaling = torch.tensor(scales[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
         self.original_rotation = torch.tensor(rots[mask_subsampled == 0], dtype=torch.float, device="cuda").requires_grad_(False)
 
+
+
     def PreprocessCloud(self, xyz, rots, scales, opacities, features_dc, features_extra):
         #avg_scale_y = np.mean(scales, axis=1)
         avg_scale_y = np.sum(np.exp(scales), axis=1) # convert log to exp
@@ -1159,6 +1196,7 @@ class GaussianModel:
         #bool_mask = np.mean(scales, axis=1) < avg_scale + 0.5 * abs(avg_scale)
         #bool_mask = np.mean(scales, axis=1) < max_scale * 0.1
         bool_mask = np.sum(np.exp(scales), axis=1) < max_scale * 0.65
+        #bool_mask = np.ones(len(xyz)).astype(int)
         xyz = xyz[bool_mask]
         rots = rots[bool_mask]
         opacities = opacities[bool_mask]
@@ -1422,7 +1460,7 @@ class Renderer:
             device="cuda",
         )
     
-    def initialize(self, input=None, num_pts=5000, radius=0.5, AABB=np.array((0, 1, 0, 1, 0, 1)), spatial_lr_scale=1, no_transform=False, no_rotation=False, blob_init_size=None, num_pts_init=None, flip_z=False, normalize=True, transform_splats_only=False):
+    def initialize(self, isRawPCD=False, input=None, num_pts=5000, radius=0.5, AABB=np.array((0, 1, 0, 1, 0, 1)), spatial_lr_scale=1, no_transform=False, no_rotation=False, blob_init_size=None, num_pts_init=None, flip_z=False, normalize=True, transform_splats_only=False):
         # load checkpoint
         if input is None:
             # init from random point cloud
@@ -1448,9 +1486,11 @@ class Renderer:
             #self.gaussians.create_from_pcd(input, 1)
             # CUSTOM TODO: maybe learning rate was too low (1) try with 10?
             self.gaussians.create_from_pcd(input, 1)
+        #elif isRGBPCD: # in case we are loading a raw point cloud with rgb values
+        #    self.gaussians.create_from_pcd()
         else:
             # load from saved ply
-            self.gaussians.load_ply(input, AABB, spatial_lr_scale=spatial_lr_scale, no_transform=no_transform, no_rotation=no_rotation, blob_init_size=blob_init_size, num_pts_init=num_pts_init, flip_z=flip_z, normalize=normalize, transform_splats_only=transform_splats_only)
+            self.gaussians.load_ply(isRawPCD, input, AABB, spatial_lr_scale=spatial_lr_scale, no_transform=no_transform, no_rotation=no_rotation, blob_init_size=blob_init_size, num_pts_init=num_pts_init, flip_z=flip_z, normalize=normalize, transform_splats_only=transform_splats_only)
 
     def initialize_static_and_dynamic(self, input=None, original_file_path=None, spatial_lr_scale=1):
         self.gaussians.load_static_and_dynamic_ply(input, original_file_path, spatial_lr_scale=spatial_lr_scale)
@@ -1490,6 +1530,8 @@ class Renderer:
             + 0
         )
 
+        #print("SCREENSPACE_POINTS: " + str(screenspace_points.shape))
+
         try:
             screenspace_points.retain_grad()
         except:
@@ -1511,7 +1553,7 @@ class Renderer:
             sh_degree=self.gaussians.active_sh_degree,
             campos=viewpoint_camera.camera_center,
             prefiltered=False,
-            debug=False,
+            debug=False
         )
 
         rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -1597,6 +1639,7 @@ class Renderer:
             colors_precomp = override_color
 
         # Rasterize visible Gaussians to image, obtain their radii (on screen).
+        #rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
         rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
             means3D=means3D,
             means2D=means2D,
@@ -1607,6 +1650,8 @@ class Renderer:
             rotations=rotations,
             cov3D_precomp=cov3D_precomp,
         )
+
+        #rendered_depth = torch.repeat_interleave(rendered_depth, 3)
 
         rendered_image = rendered_image.clamp(0, 1)
 

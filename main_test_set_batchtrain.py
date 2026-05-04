@@ -52,27 +52,60 @@ if __name__ == "__main__":
     bread = False
     fish = False
 
-    shoe = True #new
-    couch = True #new
-    vase = True #new
-    elephant = True #new
-    hocker = True #new
-    banana_tuna = True
-    chicken = True # try again later, seems to build too many splats over time, reduce!
-    plant = True
-    pumpkins = True #new
-    knife_block = True
-    rubiks_cube = True #new
-    headset = True # TODO create crop less from the original gs file
+    bear = False
+    truck = False
+    garden_desk = False
+    train = False
+    bicycle = False
+    bonsai = False
+
+    # partial meshes
+    orc_warrior = False
+    trumpet = False
+    diner_seats = False
+    pixel_cat = False
+    hot_chocolate = False
+    flip_flop = False
+
+    # lidar scans
+    wooden_bench = False
+
+    #shoe = True #new
+    #couch = True #new
+    #vase = True #new
+    #elephant = True #new
+    #hocker = True #new
+    #banana_tuna = True
+    #chicken = True # try again later, seems to build too many splats over time, reduce!
+    #plant = True
+    #pumpkins = True #new
+    #knife_block = True
+    #rubiks_cube = True #new
+    #headset = True # TODO create crop less from the original gs file
     #tennis_ball = True # CHECKPOINT
     #flashlight = True
-    leather_book = True########
-    hat = True
-    sponge = True
-    coffee_mug = True
-    bread = True
-    fish = True
+    #leather_book = True########
+    #hat = True
+    #sponge = True
+    #coffee_mug = True
+    #bread = True
+    #fish = True
 
+    #bear = True
+    #truck = True
+    #garden_desk = True
+    #train = True
+    #bicycle = True
+    #bonsai = True
+
+    #orc_warrior = True
+    #trumpet = True
+    #diner_seats = True
+    #pixel_cat = True
+    #####hot_chocolate = True # discarded
+    flip_flop = True
+
+    #wooden_bench = True
 
 
 
@@ -302,5 +335,165 @@ if __name__ == "__main__":
 
     command = cmd + prompt + save_path + object_conf
     if fish:
+        p = Popen(command)
+        p.communicate()
+
+
+
+
+    ########## bear ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a statue of a bear standing on its feet, made of stone\" "
+    save_path = "save_path=bear "
+    object_conf = "--object_conf=data/bear/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if bear:
+        p = Popen(command)
+        p.communicate()
+
+
+
+    ########## truck ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"an old bright blue pickup truck\" "
+    save_path = "save_path=truck "
+    object_conf = "--object_conf=data/truck/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if truck:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## garden desk ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a round garden table made of dark wood, with a vase on top\" "
+    save_path = "save_path=garden_desk "
+    object_conf = "--object_conf=data/garden_desk/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if garden_desk:
+        p = Popen(command)
+        p.communicate()
+
+    
+    ########## train ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"an old american freight train\" "
+    save_path = "save_path=train "
+    object_conf = "--object_conf=data/train/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if train:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## bicycle ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a white thin bicycle in a park\" "
+    save_path = "save_path=bicycle "
+    object_conf = "--object_conf=data/bicycle/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if bicycle:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## bonsai ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a bonsai made of lego\" "
+    save_path = "save_path=bonsai "
+    object_conf = "--object_conf=data/bonsai/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if bonsai:
+        p = Popen(command)
+        p.communicate()
+
+
+    #########################################################################
+    ######################### partial meshes ################################
+    #########################################################################
+    ########## orc warrior ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a stylized orc warrior\" "
+    save_path = "save_path=PARTIAL_MESHES/orc_warrior "
+    object_conf = "--object_conf=data/PARTIAL_MESHES/orc_warrior/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if orc_warrior:
+        p = Popen(command)
+        p.communicate()
+
+    ########## trumpet ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a metal trumpet\" "
+    save_path = "save_path=PARTIAL_MESHES/trumpet "
+    object_conf = "--object_conf=data/PARTIAL_MESHES/trumpet/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if trumpet:
+        p = Popen(command)
+        p.communicate()
+
+    ########## diner seats ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"two vintage diner seats with a table in the middle\" "
+    save_path = "save_path=PARTIAL_MESHES/diner_seats "
+    object_conf = "--object_conf=data/PARTIAL_MESHES/diner_seats/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if diner_seats:
+        p = Popen(command)
+        p.communicate()
+
+    ########## pixel cat ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a 3 dimensional voxelated cat like toy\" "
+    save_path = "save_path=PARTIAL_MESHES/pixel_cat "
+    object_conf = "--object_conf=data/PARTIAL_MESHES/pixel_cat/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if pixel_cat:
+        p = Popen(command)
+        p.communicate()
+
+    ########## hot chocolate ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a hot chocolate with marshmallows\" "
+    save_path = "save_path=PARTIAL_MESHES/hot_chocolate "
+    object_conf = "--object_conf=data/PARTIAL_MESHES/hot_chocolate/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if hot_chocolate:
+        p = Popen(command)
+        p.communicate()
+
+    ########## flip flop ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a flip flop with a toe straps\" "
+    save_path = "save_path=PARTIAL_MESHES/flip_flop "
+    object_conf = "--object_conf=data/PARTIAL_MESHES/flip_flop/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if flip_flop:
+        p = Popen(command)
+        p.communicate()
+
+    #########################################################################
+    ######################### lidar scans ###################################
+    #########################################################################
+
+    ########## wooden bench ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a wooden bench\" "
+    save_path = "save_path=wooden_bench "
+    object_conf = "--object_conf=data/wooden_bench/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if wooden_bench:
         p = Popen(command)
         p.communicate()

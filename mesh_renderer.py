@@ -40,13 +40,19 @@ def make_divisible(x, m=8):
     return int(math.ceil(x / m) * m)
 
 class Renderer(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, opt, opt_object=None, loadAABBbox=False):
         
         super().__init__()
 
         self.opt = opt
+        self.opt_object = opt_object
 
-        self.mesh = Mesh.load(self.opt.mesh, resize=False)
+        if loadAABBbox:
+            self.mesh = Mesh.load(self.opt_object.AABBMesh, resize=True) # unit size
+            self.mesh.resize(self.opt_object.AABBScale)
+            self.mesh.translate(self.opt_object.AABBCenter)
+        else:
+            self.mesh = Mesh.load(self.opt.mesh, resize=False)
 
         if not self.opt.force_cuda_rast and (not self.opt.gui or os.name == 'nt'):
             self.glctx = dr.RasterizeGLContext()
@@ -76,7 +82,7 @@ class Renderer(nn.Module):
         self.mesh.write(save_path)
 
     
-    def render(self, pose, proj, h0, w0, ssaa=1, bg_color=1, texture_filter='linear-mipmap-linear'):
+    def render(self, pose, proj, h0, w0, ssaa=1, bg_color=1, background=torch.tensor([1.0, 1.0, 1.0], device='cuda'), texture_filter='linear-mipmap-linear'):
         
         # do super-sampling
         if ssaa != 1:
@@ -109,6 +115,12 @@ class Renderer(nn.Module):
         texc, texc_db = dr.interpolate(self.mesh.vt.unsqueeze(0).contiguous(), rast, self.mesh.ft, rast_db=rast_db, diff_attrs='all')
         albedo = dr.texture(self.raw_albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode=texture_filter) # [1, H, W, 3]
         albedo = torch.sigmoid(albedo)
+
+        #change bg of albedo depending on bg_color in this iteration
+        #albedo[background_mask] = background[0]
+        background_mask = rast[0, ..., 3:] == 0 
+        depth[background_mask.squeeze(0)] = background[0]
+
         # get vn and render normal
         if self.opt.train_geo:
             i0, i1, i2 = self.mesh.f[:, 0].long(), self.mesh.f[:, 1].long(), self.mesh.f[:, 2].long()

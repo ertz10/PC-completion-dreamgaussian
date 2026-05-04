@@ -332,6 +332,12 @@ class Mesh:
     # aabb
     def aabb(self):
         return torch.min(self.v, dim=0).values, torch.max(self.v, dim=0).values
+    
+    def resize(self, scale):
+        self.v = self.v * torch.tensor((scale), device='cuda')
+
+    def translate(self, translation):
+        self.v += torch.tensor((translation), device='cuda')
 
     # unit size
     @torch.no_grad()

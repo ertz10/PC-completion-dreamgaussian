@@ -12,7 +12,7 @@ scale: 1.0
 dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: 'data/couch_blender'
-load: "data/couch_blender/couch_cropped.ply"
+load: "data/couch_blender/couch_blender_cropped.ply"
 
 num_pts_init: 5_000
 

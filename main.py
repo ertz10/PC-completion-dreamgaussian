@@ -17,6 +17,8 @@ import rembg
 from cam_utils import orbit_camera, OrbitCamera
 from gs_renderer import Renderer, MiniCam, BasicPointCloud, SH2RGB
 
+from mesh_renderer import Renderer as MeshRenderer
+
 from grid_put import mipmap_linear_grid_put_2d
 from mesh import Mesh, safe_normalize
 
@@ -53,6 +55,8 @@ class GUI:
 
         # renderer
         self.renderer = Renderer(sh_degree=self.opt.sh_degree, opt_object=self.opt_object)
+        # mesh renderer for rendering aabbs in case of mesh completion
+        self.mesh_renderer = MeshRenderer(opt, opt_object=opt_object, loadAABBbox=True).to(self.device)
         self.gaussain_scale_factor = 1
 
         # input image
@@ -163,7 +167,7 @@ class GUI:
         #    self.renderer.initialize(self.opt.load, AABB=self.AABB)   
         # CUSTOM load from object file
         if self.opt_object.load is not None:
-            self.renderer.initialize(self.opt_object.load, num_pts=self.opt_object.num_pts_init, AABB=self.AABB, spatial_lr_scale=self.opt_object.position_lr_factor)         
+            self.renderer.initialize(self.opt_object.isRawPCD, self.opt_object.load, num_pts=self.opt_object.num_pts_init, AABB=self.AABB, spatial_lr_scale=self.opt_object.position_lr_factor)         
         else:
             # CUSTOM CODE
             if self.opt.point_cloud is None:
@@ -369,6 +373,7 @@ class GUI:
             colored_images_alpha = []
             colored_images_static_alpha = []
             AABBimages = []
+            AABBimagesalpha = []
             static_images = []
             dynamic_images = []
             static_depth_images = []
@@ -393,10 +398,11 @@ class GUI:
                 #CUSTOM
                 
                 # TODO sample known angles more often
-                '''
+                #'''
                 if (self.step <= self.opt.captured_camera_angles_only_until or (self.step % 3 == 0 and self.opt_object.only_dynamic_splats == False)):
-                    angle1 = self.opt_object.visible_angles[0]
-                    angle2 = self.opt_object.visible_angles[1]
+                #if (self.step % 1 == 0 and self.opt_object.only_dynamic_splats == False):
+                    angle1 = self.opt_object.visible_angles[0][0]
+                    angle2 = self.opt_object.visible_angles[0][1]
                     if (angle1 > angle2): # e.g. [280, 30] going around zero 
                         rand1 = np.random.randint(angle1, 360)
                         rand2 = np.random.randint(0, angle2)
@@ -410,8 +416,8 @@ class GUI:
                     #hor = int((360.0 / self.opt.iters) * self.step - 180.0)
                     #hor = int((360.0 / self.opt.iters) * self.step)
                     hor = np.random.randint(0, 360)
-                    '''
-                hor = np.random.randint(0, 360)
+                #'''
+                #hor = np.random.randint(0, 360)
 
                 #radius = 0.0#-1.25
                 radius = np.random.uniform(0, 1) - 0.5 #0.75#-1.25
@@ -450,7 +456,22 @@ class GUI:
                 #    out = self.renderer.render(cur_cam, bg_color=bg_color)
                 #else:
                     # ONLY FOR DEBUG PURPOSE TODO remove in final version
-                out = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                out = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats) 
+                out_static = self.renderer.render(cur_cam, bg_color=bg_color, only_static_splats=True)
+
+                ssaa = min(2.0, max(0.125, 2 * np.random.random()))
+                out_mesh = self.mesh_renderer.render(pose, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
+                out_mesh_albedo = out_mesh['depth'] # shape [H, W, C]
+                out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 1, 2)
+                out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 0, 1).unsqueeze(0)
+                #out_mesh_depth = out_mesh['depth']
+                out_mesh_alpha = out_mesh['alpha']
+                out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 1, 2)
+                out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 0, 1).unsqueeze(0)
+
+                AABBimagesalpha.append(out_mesh_alpha)
+                AABBimages.append(out_mesh_albedo)
+
                 
                 # DEBUG render
                 ##############
@@ -481,8 +502,8 @@ class GUI:
                     static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
                     static_images.append(torch.vstack((static_points_image, static_points_alpha)))
                     dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
-                    static_depth_images.append(static_points_depth)
-                    dynamic_depth_images.append(dynamic_points_depth)
+                    #static_depth_images.append(static_points_depth.unsqueeze(0))
+                    #dynamic_depth_images.append(dynamic_points_depth.unsqueeze(0))
                 ######################################################################
                 ######################################################################
 
@@ -500,6 +521,8 @@ class GUI:
                 #colored_images_static_alpha.append(colored_image_static_alpha)
                 colored_images_alpha.append(image_alpha)
                 colored_images_static_alpha.append(image_static_alpha)
+
+                static_depth_images.append(out_static["depth"].unsqueeze(0))
 
 
 
@@ -538,20 +561,35 @@ class GUI:
                         #else:
                             # ONLY FOR DEBUG PURPOSE TODO remove in final version
                         out_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                        out_static_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_static_splats=True)
+
+                        out_mesh_i = self.mesh_renderer.render(pose_i, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
+                        out_mesh_i_albedo = out_mesh_i['depth']
+                        out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 1, 2)
+                        out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 0, 1).unsqueeze(0)
+                        #out_mesh_i_depth = out_mesh['depth']
+                        out_mesh_i_alpha = out_mesh_i['alpha']
+                        out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 1, 2)
+                        out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 0, 1).unsqueeze(0)
+
+                        AABBimagesalpha.append(out_mesh_i_alpha)
+                        AABBimages.append(out_mesh_i_albedo)
+
 
                         out_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=False)
                         out_static_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_static_splats=True)
 
                         #CUSTOM render Bounding Box to image
                         #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam_i, self.opt.radius + radius)
+                        #AABBimages.append(AABBimage)
                         ######################################################################
                         ########### dynamic, static point rendering ##########################
                         ######################################################################
                         static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
                         static_images.append(torch.vstack((static_points_image, static_points_alpha)))
                         dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
-                        static_depth_images.append(static_points_depth)
-                        dynamic_depth_images.append(dynamic_points_depth)
+                        #static_depth_images.append(static_points_depth.unsqueeze(0))
+                        dynamic_depth_images.append(dynamic_points_depth.unsqueeze(0))
                         #AABBimage = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color)
                         #AABBimages.append(AABBimage)
                         ######################################################################
@@ -576,6 +614,9 @@ class GUI:
                         colored_images_alpha.append(image_alpha)
                         colored_images_static_alpha.append(image_static_alpha)
 
+                        static_depth_images.append(out_static_i["depth"].unsqueeze(0))
+
+
 
                 # CUSTOM
                 #self.customLoss.write_capture_to_drive(AABBimages, cur_cam.image_width, cur_cam.image_height, len(AABBimages))
@@ -593,6 +634,8 @@ class GUI:
             #print(hor, ver)
             #kiui.vis.plot_image(images)
 
+
+
             # guidance loss
             if self.enable_sd:
                 if self.opt.mvdream or self.opt.imagedream:
@@ -603,7 +646,7 @@ class GUI:
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
                                                                                                                                                                                 dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
                                                                                                                                                                                 current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, use_recon_loss=self.opt.use_recon_loss, 
-                                                                                                                                                                                only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                                                                                                                                                                                only_dynamic_splats=self.opt_object.only_dynamic_splats, AABBimages=AABBimages, AABBimagesalpha=AABBimagesalpha)
                 else:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, customLoss=self.customLoss,
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 

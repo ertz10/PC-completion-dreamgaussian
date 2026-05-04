@@ -12,7 +12,7 @@ scale: 1.8
 dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: "data/elephant"
-load: "data/elephant/elephant_cropped_v2.ply"
+load: "data/elephant/elephant_cropped.ply"
 
 num_pts_init: 5_000
 

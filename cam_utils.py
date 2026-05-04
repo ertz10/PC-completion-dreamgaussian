@@ -63,7 +63,7 @@ def orbit_camera(elevation, azimuth, radius=1, is_degree=True, target=None, open
 
 
 class OrbitCamera:
-    def __init__(self, W, H, r=2, fovy=60, near=0.01, far=100):
+    def __init__(self, W, H, r=2, fovy=60, near=0.01, far=100.0):
         self.W = W
         self.H = H
         self.radius = r  # camera distance from center
