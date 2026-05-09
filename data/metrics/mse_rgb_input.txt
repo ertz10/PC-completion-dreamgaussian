@@ -1,0 +1,26 @@
+                shoe: 0.0
+       couch_blender: 0.0
+                vase: 0.0
+            elephant: 0.0
+              hocker: 0.0
+         banana_tuna: 0.0
+             chicken: 0.0
+               plant: 0.0
+            pumpkins: 0.0
+         knife_block: 0.0
+         rubiks_cube: 0.0
+             headset: 0.0
+        leather_book: 0.0
+                 hat: 0.0
+              sponge: 0.0
+          coffee_mug: 0.0
+               bread: 0.0
+                fish: 0.0
+                bear: 0.0
+             bicycle: 0.0
+              bonsai: 0.0
+         garden_desk: 0.0
+               train: 0.0
+               truck: 0.0
+
+Mean: 0.0

@@ -34,6 +34,6 @@ tests/
 gs_ply/
 
 *_final.ply
-metrics/
+#metrics/
 BACKUPS/
 baselines/
