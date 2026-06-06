@@ -10,6 +10,7 @@ import torch
 
 
 from gs_renderer import Renderer, MiniCam, BasicPointCloud, SH2RGB
+from mesh_renderer import Renderer as MeshRenderer
 
 from cam_utils import orbit_camera, OrbitCamera
 
@@ -37,8 +38,10 @@ for f in files:
 
 class GSPLY_Handler:
 
-    def __init__(self, path, object_name, opt_object, opt, opt_alignment=None):
-        self.renderer = Renderer(sh_degree=3, opt_object=opt_object, opt_alignment=opt_alignment)
+    def __init__(self, path, object_name, opt_object, opt, opt_alignment=None, mesh_path=None):
+        self.renderer = None #Renderer(sh_degree=3, opt_object=opt_object, opt_alignment=opt_alignment)
+        #self.reference_renderer = None
+        self.mesh_renderer = None
         self.path = path
         self.object_name = object_name
         self.opt_object = opt_object
@@ -46,18 +49,32 @@ class GSPLY_Handler:
 
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
 
-    def train_step(self, image_path=None, azimuth=None, iter_angle=None, elevation=0.0):
+    def loadRenderer(self, opt_object=None, opt_alignment=None, *renderArgs):
+        self.renderer = Renderer(sh_degree=3, opt_object=opt_object, opt_alignment=opt_alignment)
+        self.renderer.initialize(*renderArgs)
+        #self.reference_renderer = Renderer(sh_degree=3, opt_object=opt_object, opt_alignment=None)
+
+    def loadMesh(self, mesh_path):
+        self.mesh_renderer = MeshRenderer(self.opt, opt_object=self.opt_object, loadMesh=mesh_path).to('cuda')
+
+    def train_step(self, image_path=None, azimuth=None, iter_angle=None, elevation=0.0, ref_depth_min=None, ref_depth_norm_fac=None):
     
-            
+        print(ref_depth_min)
+        print(ref_depth_norm_fac)
         ### novel view (manual batch)
         #render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
         render_resolution = 512#128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512) #self.opt_object.mv_dream_render_res#
         images = []
-        colored_images = []
-        colored_images_static = []
-        colored_images_alpha = []
-        colored_images_static_alpha = []
-        masks = []
+        images_depth = []
+        images_alpha = []
+        #colored_images = []
+        #colored_images_static = []
+        #colored_images_alpha = []
+        #colored_images_static_alpha = []
+        #masks = []
+        MeshImagesAlpha = []
+        MeshImagesDepth = []
+        MeshImages = []
 
         static_images = []
         dynamic_images = []
@@ -111,10 +128,34 @@ class GSPLY_Handler:
         #    out = self.renderer.render(cur_cam, bg_color=bg_color)
         #else:
             # ONLY FOR DEBUG PURPOSE TODO remove in final version
-        out = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+        if self.mesh_renderer == None: 
+            out = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+             
+
+        ###### MESH RENDER #########
+        else:
+            ssaa = 1.0#min(2.0, max(0.125, 2 * np.random.random()))
+            out_mesh = self.mesh_renderer.render(pose, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
+            out_mesh_albedo = out_mesh['image'] # shape [H, W, C]
+            out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 1, 2)
+            out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 0, 1).unsqueeze(0)
+
+            out_mesh_depth = out_mesh['depth']
+            out_mesh_depth = torch.swapaxes(out_mesh_depth, 1, 2)
+            out_mesh_depth = torch.swapaxes(out_mesh_depth, 0, 1).unsqueeze(0)
+
+            out_mesh_alpha = out_mesh['alpha']
+            out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 1, 2)
+            out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 0, 1).unsqueeze(0)
+
+            MeshImagesAlpha.append(out_mesh_alpha)
+            MeshImagesDepth.append(out_mesh_depth)
+            MeshImages.append(out_mesh_albedo)
+            ############################
         
         # DEBUG render
         ##############
+        '''
         pose_debug = orbit_camera(self.opt_object.reference_angle_v, int((360.0 / self.opt.iters) * 1 * 2.0), self.opt.radius + radius)
         cur_cam_debug = MiniCam(pose_debug, 1024, 1024, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
         out_debug = self.renderer.render(cur_cam_debug, bg_color=torch.tensor([1,1,1], dtype=torch.float32, device='cuda'), only_dynamic_splats=self.opt_object.only_dynamic_splats)
@@ -127,33 +168,38 @@ class GSPLY_Handler:
         out_debug_col_static = self.renderer.render(cur_cam, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color, only_static_splats=True)
         ##############
         # DEBUG render end
-
-        out_alpha = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=False)
-        out_static_alpha = self.renderer.render(cur_cam, bg_color=bg_color, only_static_splats=True)
-
-        '''
-        static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
-        static_images.append(torch.vstack((static_points_image, static_points_alpha)))
-        dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
-        static_depth_images.append(static_points_depth)
-        dynamic_depth_images.append(dynamic_points_depth)
         '''
 
-        image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
-        images.append(image)
-        image_alpha = out_alpha["depth"].unsqueeze(0)#.unsqueeze(0).repeat_interleave(3, 1)
-        image_static_alpha = out_static_alpha["depth"].unsqueeze(0)
-        colored_image = out_debug_col["image"].unsqueeze(0)
-        colored_image_alpha = out_debug_col["alpha"].unsqueeze(0)
-        colored_image_static = out_debug_col_static["image"].unsqueeze(0)
-        colored_image_static_alpha = out_debug_col_static["alpha"].unsqueeze(0)
-        colored_images.append(colored_image)
-        colored_images_static.append(colored_image_static)
-        #colored_images_alpha.append(colored_image_alpha)
-        #colored_images_static_alpha.append(colored_image_static_alpha)
-        colored_images_alpha.append(image_alpha)
-        colored_images_static_alpha.append(image_static_alpha)
-        masks.append(colored_image_alpha)
+        if self.mesh_renderer == None:
+            #out = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=False)
+            #out_static_alpha = self.renderer.render(cur_cam, bg_color=bg_color, only_static_splats=True)
+
+            '''
+            static_points_image, dynamic_points_image, static_points_depth, dynamic_points_depth, static_points_alpha, dynamic_points_alpha = self.customLoss.GSRendererDepthBlending(self.renderer.gaussians, cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+            static_images.append(torch.vstack((static_points_image, static_points_alpha)))
+            dynamic_images.append(torch.vstack((dynamic_points_image, dynamic_points_alpha)))
+            static_depth_images.append(static_points_depth)
+            dynamic_depth_images.append(dynamic_points_depth)
+            '''
+
+            image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
+            images.append(image)
+            image_depth = out["depth"].unsqueeze(0)#.unsqueeze(0).repeat_interleave(3, 1)
+            images_depth.append(image_depth)
+            image_alpha = out["alpha"].unsqueeze(0)
+            images_alpha.append(image_alpha)
+            #image_static_alpha = out_static_alpha["depth"].unsqueeze(0)
+            #colored_image = out_debug_col["image"].unsqueeze(0)
+            #colored_image_alpha = out_debug_col["alpha"].unsqueeze(0)
+            #colored_image_static = out_debug_col_static["image"].unsqueeze(0)
+            #colored_image_static_alpha = out_debug_col_static["alpha"].unsqueeze(0)
+            #colored_images.append(colored_image)
+            #colored_images_static.append(colored_image_static)
+            #colored_images_alpha.append(colored_image_alpha)
+            #colored_images_static_alpha.append(colored_image_static_alpha)
+            
+            #colored_images_static_alpha.append(image_static_alpha)
+            #masks.append(colored_image_alpha)
 
 
 
@@ -191,10 +237,32 @@ class GSPLY_Handler:
                 #    out_i = self.renderer.render(cur_cam_i, bg_color=bg_color)
                 #else:
                     # ONLY FOR DEBUG PURPOSE TODO remove in final version
-                out_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
+                out_i = None
+                if self.mesh_renderer == None:
+                    out_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
 
-                out_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=False)
-                out_static_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_static_splats=True)
+                    #out_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=False)
+                    #out_static_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_static_splats=True)
+
+                else:
+                    ############## MESH images ##############
+                    out_mesh_i = self.mesh_renderer.render(pose_i, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
+                    out_mesh_i_albedo = out_mesh_i['image']
+                    out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 1, 2)
+                    out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 0, 1).unsqueeze(0)
+
+                    out_mesh_i_depth = out_mesh_i['depth']
+                    out_mesh_i_depth = torch.swapaxes(out_mesh_i_depth, 1, 2)
+                    out_mesh_i_depth = torch.swapaxes(out_mesh_i_depth, 0, 1).unsqueeze(0)
+
+                    out_mesh_i_alpha = out_mesh_i['alpha']
+                    out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 1, 2)
+                    out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 0, 1).unsqueeze(0)
+
+                    MeshImagesAlpha.append(out_mesh_i_alpha)
+                    MeshImagesDepth.append(out_mesh_i_depth)
+                    MeshImages.append(out_mesh_i_albedo)
+                    #########################################
 
                 #CUSTOM render Bounding Box to image
                 #AABBimage = self.customLoss.AABBRender(self.AABB, cur_cam_i, self.opt.radius + radius)
@@ -213,27 +281,31 @@ class GSPLY_Handler:
                 ######################################################################    
                 # 
                 '''
-                out_debug_col = self.renderer.render(cur_cam_i, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color)
-                out_debug_col_static = self.renderer.render(cur_cam_i, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color, only_static_splats=True)
-                    
 
-                image = out_i["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
-                images.append(image)
-                image_alpha = out_alpha["depth"].unsqueeze(0)#.unsqueeze(0).repeat_interleave(3, 1)
-                #print(image.shape)
-                #print(image_alpha.shape)
-                image_static_alpha = out_static_alpha["depth"].unsqueeze(0)
-                colored_image = out_debug_col["image"].unsqueeze(0)
-                colored_image_alpha = out_debug_col["alpha"].unsqueeze(0)
-                colored_images.append(colored_image)
-                masks.append(colored_image_alpha)
-                #colored_images_alpha.append(colored_image_alpha)
-                colored_image_static = out_debug_col_static["image"].unsqueeze(0)
-                colored_image_static_alpha = out_debug_col_static["alpha"].unsqueeze(0)
-                colored_images_static.append(colored_image_static)
-                #colored_images_static_alpha.append(colored_image_static_alpha)
-                colored_images_alpha.append(image_alpha)
-                colored_images_static_alpha.append(image_static_alpha)
+                if self.mesh_renderer == None:
+                    #out_debug_col = self.renderer.render(cur_cam_i, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color)
+                    #out_debug_col_static = self.renderer.render(cur_cam_i, bg_color=bg_color, static_color=static_color, dynamic_color=dynamic_color, only_static_splats=True)
+
+                    image = out_i["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
+                    images.append(image)
+                    image_depth = out_i["depth"].unsqueeze(0)#.unsqueeze(0).repeat_interleave(3, 1)
+                    images_depth.append(image_depth)
+                    image_alpha = out_i["alpha"].unsqueeze(0)
+                    images_alpha.append(image_alpha)
+
+                    #print(image.shape)
+                    #print(image_alpha.shape)
+                    #image_static_alpha = out_static_alpha["depth"].unsqueeze(0)
+                    #colored_image = out_debug_col["image"].unsqueeze(0)
+                    #colored_image_alpha = out_debug_col["alpha"].unsqueeze(0)
+                    #colored_images.append(colored_image)
+                    #masks.append(colored_image_alpha)
+                    #colored_images_alpha.append(colored_image_alpha)
+                    #colored_image_static = out_debug_col_static["image"].unsqueeze(0)
+                    #colored_image_static_alpha = out_debug_col_static["alpha"].unsqueeze(0)
+                    #colored_images_static.append(colored_image_static)
+                    #colored_images_static_alpha.append(colored_image_static_alpha)
+                    #colored_images_static_alpha.append(image_static_alpha)
 
 
         #images = torch.cat(images, dim=0)
@@ -251,47 +323,56 @@ class GSPLY_Handler:
         img_width = 256 #input1.shape[2]
         img_height = 256 #input1.shape[3]
 
-        inputs = torch.vstack((images))
-        inputs2 = torch.vstack((colored_images_alpha)) #depth
+        inputs = torch.vstack((images)) if self.mesh_renderer == None else torch.vstack((MeshImages))
+        inputs2 = torch.vstack((images_depth)) if self.mesh_renderer == None else torch.vstack((MeshImagesDepth)) #depth
         #inputs2 = torch.repeat_interleave(inputs2.unsqueeze(1), 3, 1)
-        print(inputs.shape)
-        print(inputs2.shape)
-        inputs3 = torch.vstack((colored_images))
-        inputs4 = torch.vstack((masks))
+        inputs3 = torch.vstack((images_alpha)) if self.mesh_renderer == None else torch.vstack((MeshImagesAlpha))
+
         # create figure
         figure = PIL.Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
         figure2 = PIL.Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
         figure3 = PIL.Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
-        figure4 = PIL.Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
-        #figure = PIL.Image.new('RGB', (512 * 4, 512 * 5), color=(255, 255, 255))
-
         
         inputs = F.interpolate((inputs), (img_width, img_height), mode="bilinear", align_corners=False)
         inputs2 = F.interpolate((inputs2), (img_width, img_height), mode="bilinear", align_corners=False)
         inputs3 = F.interpolate((inputs3), (img_width, img_height), mode="bilinear", align_corners=False)
-        inputs4 = F.interpolate((inputs4), (img_width, img_height), mode="bilinear", align_corners=False)
 
         # transform depth to uint8
-        inputs2 = F.interpolate((inputs2), (img_width, img_height), mode="bilinear", align_corners=False)
-        inputs2 = (inputs2 - inputs2.min()) / (inputs2.max() - inputs2.min()) * 255
+        #inputs2 = F.interpolate((inputs2), (img_width, img_height), mode="bilinear", align_corners=False)
+        
+        mask = inputs3 > 0.15
+        #mask = inputs2 < 10.0
+        print("MIN: " + str(inputs2[mask].min()))
+        print("MAX: "  +str(inputs2[mask].max()))
+        print("MEAN: "  +str(inputs2[mask].mean()))
+        norm_factor = None
+        ref_min = None
+        if ref_depth_norm_fac == None and ref_depth_min == None:
+            #norm_factor = (inputs2[inputs2<10.0].max() - inputs2[inputs2<10.0].min()) # * 255
+            norm_factor = (inputs2.max() - inputs2.min()) # * 255
+            ref_min = inputs2.min()
+            #inputs2 = (inputs2 - inputs2.min()) / (inputs2.max() - inputs2.min()) * 255
+            inputs2 = (inputs2 - ref_min) / norm_factor * 255
+        else:
+            inputs2 = (inputs2 - ref_depth_min) / ref_depth_norm_fac * 255
+        # TODO use normalization factor of input for every object
+        #inputs2[mask] = (inputs2[mask] - inputs2[mask].min()) / (inputs2[mask].max() - inputs2[mask].min()) * 255
+        
+        #inputs2 = inputs2 / inputs2.max() * 255
+        #print("MIN: " + str(inputs2.min()))
+        #print("MAX: " + str(inputs2.max()))
         inputs2 = inputs2.to(torch.uint8)
         #
-        
         
         # add images
         transform = T.ToPILImage()
         image = transform(inputs[0])
         image2 = transform(inputs2[0])
         image3 = transform(inputs3[0])
-        image4 = transform(inputs4[0])
+
         figure.paste(image, (0 * img_width, 0 * img_height))
         figure2.paste(image2, (0 * img_width, 0 * img_height))
         figure3.paste(image3, (0 * img_width, 0 * img_height))
-        figure4.paste(image4, (0 * img_width, 0 * img_height))
-
-        #image = transform(inputs[2])
-        #image = transform(inputs[1])
-        #figure.paste(image, (1 * img_width, 0 * img_height))
 
         try:
             #figure.save(r"debug/diffModelDebug" + str(string) + r".jpg")
@@ -299,551 +380,15 @@ class GSPLY_Handler:
             #name = dp.split('/')[-1] # get last element as name
             #figure.save(self.path + '/' + self.object_name + '_trellis' + '.png')
             angle = str(int(iter_angle))
-            print(image_path + "_" + angle + "_color.png")
             figure.save(image_path + "_" + angle + "_color.png")
             figure2.save(image_path + "_" + angle + "_depth.png")
-            figure4.save(image_path + "_" + angle + "_alpha.png")
-            #figure3.save(image_path + "_" + angle + "_vis.png")
-            #figure.save(dp + '/' + name + string + '_sdsonly.png')
+            figure3.save(image_path + "_" + angle + "_alpha.png")
         except OSError:
             print("Cannot save image")
         
         ####################################
         ######### write images end #########
         ####################################
+
+        return ref_min, norm_factor # used for input only depth renderings
                                                                                                                                                         
-class test_capsule:
-
-    def __init__(self, opt_object_path_prefix, opt_path, path, image_folder_path, image_suffix, object_suffix, *renderArgs):
-        self.opt_object_path_prefix = opt_object_path_prefix
-        self.opt_path = opt_path
-        self.opt_object = None#OmegaConf.merge(OmegaConf.load(opt_object_path))
-        self.opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        self.path = path
-        self.object_path = "" # will be filled later
-        self.object_suffix = object_suffix
-        self.image_path = "" # --,,--
-        self.image_folder_path = image_folder_path
-        self.image_suffix = image_suffix
-        self.data_handler = GSPLY_Handler(path, "", None, opt=self.opt)
-        self.data_handler.initialize(renderArgs)
-
-    def loadObjectConf(self, object):
-        self.opt_object = OmegaConf.merge(OmegaConf.load(self.opt_object_path_prefix + str(object) + "/conf.yaml"))
-        self.data_handler.opt_object = self.opt_object
-
-
-if __name__ == "__main__":
-    
-    #test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish"]
-    #
-    #test_objects = ["bear", "bicycle", "bonsai", "garden_desk", "train", "truck"]
-    test_objects = [""]
-    test_partial_meshes = ["diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
-    '''# static inputs
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/full_pipe/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/full_pipe/" + str(object) + "/" + str(object) + "_cropped.ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=False, no_rotation=False, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=True)
-        image_path = "../data/test_images/input/" + str(object) + "/" + str(object) + "_input"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    # [isRawPCD, object_path, no_transform, no_rotation, blob_init_size, num_pts_init, flip_z, normalize]
-    args = [False, "", False, False, 0.0001, 1, False, True]
-    test_capsule_input = test_capsule("../data/BACKUPS/full_pipe/", "../configs/text_mv.yaml", "../data/BACKUPS/full_pipe/",
-                                    "../data/test_images/input/", "_input", "_cropped.ply", *args)
-    
-    #False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False
-    args = [False, "", True, True, 0.0001, 1, False, False]
-    test_capsule_full = test_capsule("../data/BACKUPS/full_pipe/", "../configs/text_mv.yaml", "../data/BACKUPS/full_pipe/",
-                                    "../data/test_images/full/", "_full", "_final.ply" *args)
-    
-
-
-    test_capsules = [test_capsule_input]
-
-    for tc_item in test_capsules:
-        for object in test_partial_meshes:
-            from omegaconf import OmegaConf
-            tc_item.loadObjectConf(str(object) + "/conf.yaml")
-            opt_path = tc_item.opt_object
-            opt_object = tc_item.opt_object
-            opt = tc_item.opt
-
-            # load gsply
-            tc_item.path = tc_item.path + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-            tc_item.object_path = tc_item.path + tc_item.object_suffix
-            tc_item.data_handler.object_name = str(object)
-            tc_item.image_path = tc_item.image_folder_path + str(object) + "/" + str(object) + tc_item.image_suffix
-            for i in range(0,8):
-                azimuth = tc_item.opt_object.reference_angle_hor + 45.0 * i
-                iter_angle = 45.0 * i
-                tc_item.data_handler.train_step(tc_item.image_path, azimuth, iter_angle) 
-
-    # our test objects and capture from different angles
-    # load gsply's and capture reference image
-    '''
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/full_pipe/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/full_pipe/" + str(object) + "/" + str(object) + "_final.ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize()
-        image_path = "../data/test_images/full/" + str(object) + "/" + str(object) + "_full"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-
-    '''# ABLATION: no preserve loss
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/no_preserve_loss/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/no_preserve_loss/" + str(object) + "/" + str(object) + "_final.ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/no_preserve_loss/" + str(object) + "/" + str(object) + "_no_preserve_loss"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    '''# ABLATION: no preserve loss no init no schedule
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/no_preserve_no_init_no_schedule/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/no_preserve_no_init_no_schedule/" + str(object) + "/" + str(object) + "_final.ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/no_preserve_no_init_no_schedule/" + str(object) + "/" + str(object) + "_no_preserve_no_init_no_schedule"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    '''# ABLATION: no schedule
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/no_schedule/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/no_schedule/" + str(object) + "/" + str(object) + "_final.ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/no_schedule/" + str(object) + "/" + str(object) + "_no_schedule"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-    
-    
-    
-    # TRELLIS
-    # load gsply's and capture reference image
-    '''
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/metrics/baselines/trellis/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/metrics/baselines/trellis/" + str(object) + "/" + str(object) + "_aligned" + ".ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt, opt_alignment=opt_alignment)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=False, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False, transform_splats_only=True)
-
-        image_path = "../data/test_images/baselines/trellis/" + str(object) + "/" + str(object) + "_trellis"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    # TRELLIS MV
-    # load gsply's and capture reference image
-    '''
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        config_path = "../data/metrics/baselines/trellis/multiview/" + str(object) + "_config.yaml"
-        opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/metrics/baselines/trellis/multiview/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/metrics/baselines/trellis/multiview/" + str(object) + "/" + str(object) + "_mv_aligned" + ".ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt, opt_alignment=opt_alignment)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=False, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False, transform_splats_only=True)
-
-        image_path = "../data/test_images/baselines/trellis_mv/" + str(object) + "/" + str(object) + "_trellis_mv"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-
-    # InstantMesh
-    # load gsply's and capture reference image
-    '''
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        config_path = "../data/metrics/baselines/instantmesh/" + str(object) + "/" + str(object) + "_config.yaml"
-        opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/metrics/baselines/instantmesh/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/metrics/baselines/instantmesh/" + str(object) + "/" + str(object) + "_aligned" + ".ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt, opt_alignment=opt_alignment)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=False, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False, transform_splats_only=True)
-
-        image_path = "../data/test_images/baselines/instantmesh/" + str(object) + "/" + str(object) + "_instantmesh"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    ''' limitations
-    #for object in test_objects:
-    object = "rubiks_cube"
-    from omegaconf import OmegaConf
-    opt_object_path = "../data/" + str(object) + "/conf.yaml"
-    opt_path = "../configs/text_mv.yaml"
-    opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-    opt = OmegaConf.merge(OmegaConf.load(opt_path))
-    #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-    #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-    # load gsply
-    path = "../data/BACKUPS/limitations/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-    object_path = "../data/BACKUPS/limitations/" + str(object) + "/" + str(object) + "_final.ply"
-
-    gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-    gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-    image_path = "../data/test_images/limitations/" + str(object) + "/" + str(object) + "_limitation"
-    for i in range(0,8):
-        azimuth = opt_object.reference_angle_hor + 45.0 * i
-        iter_angle = 45.0 * i
-        gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    ''' limitations input
-    #for object in test_objects:
-    object = "rubiks_cube"
-    from omegaconf import OmegaConf
-    opt_object_path = "../data/" + str(object) + "/conf.yaml"
-    opt_path = "../configs/text_mv.yaml"
-    opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-    opt = OmegaConf.merge(OmegaConf.load(opt_path))
-    #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-    #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-    # load gsply
-    path = "../data/BACKUPS/limitations_input/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-    object_path = "../data/BACKUPS/limitations_input/" + str(object) + "/" + str(object) + "_cropped_much.ply"
-
-    gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-    gsply_handler.renderer.initialize(False, object_path, no_transform=False, no_rotation=False, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=True)
-    image_path = "../data/test_images/limitations_input/" + str(object) + "/" + str(object) + "_limitation_input"
-    for i in range(0,8):
-        azimuth = opt_object.reference_angle_hor + 45.0 * i
-        iter_angle = 45.0 * i
-        gsply_handler.train_step(image_path, azimuth, iter_angle) 
-'''
-
-
-
-    test_objects = ["plant"]
-    ''' # VARIANCE
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/variance/12/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/variance/12/" + str(object) + "/" + str(object) + "_final.ply"
-       
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/variance/12/" + str(object) + "/" + str(object) + "_variance12"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-    test_objects = ["plant"]
-    ''' # VARIANCE
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/variance/333/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/variance/333/" + str(object) + "/" + str(object) + "_final.ply"
-    
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/variance/333/" + str(object) + "/" + str(object) + "_variance333"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-    '''
-    test_objects = ["plant"]
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/variance/1024/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/variance/1024/" + str(object) + "/" + str(object) + "_final.ply"
-    
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/variance/1024/" + str(object) + "/" + str(object) + "_variance1024"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-
-    '''
-    test_objects = ["hat"]
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/variance/643/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/variance/643/" + str(object) + "/" + str(object) + "_final.ply"
-    
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/variance/643/" + str(object) + "/" + str(object) + "_variance643"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    '''
-    test_objects = ["hat"]
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/variance/23/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/variance/23/" + str(object) + "/" + str(object) + "_final.ply"
-    
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/variance/23/" + str(object) + "/" + str(object) + "_variance23"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    '''
-    test_objects = ["coffee_mug"]
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/variance/424/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/variance/424/" + str(object) + "/" + str(object) + "_final.ply"
-    
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/variance/424/" + str(object) + "/" + str(object) + "_variance424"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-    '''
-    test_objects = ["coffee_mug"]
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/variance/860/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/variance/860/" + str(object) + "/" + str(object) + "_final.ply"
-    
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(False, object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/variance/860/" + str(object) + "/" + str(object) + "_variance860"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle) 
-    '''
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    ''' high elevation of banana_tuna
-    test_objects = ["banana_tuna"]
-    for object in test_objects:
-        from omegaconf import OmegaConf
-        opt_object_path = "../data/" + str(object) + "/conf.yaml"
-        opt_path = "../configs/text_mv.yaml"
-        opt_object = OmegaConf.merge(OmegaConf.load(opt_object_path))
-        opt = OmegaConf.merge(OmegaConf.load(opt_path))
-        #config_path = "../data/metrics/baselines/trellis/configs/" + str(object) + "_config.yaml"
-        #opt_alignment = OmegaConf.merge(OmegaConf.load(config_path))
-
-        # load gsply
-        path = "../data/BACKUPS/full_pipe/" + str(object) + "/" + str(object) # + "/" + str(object) + ".ply"
-        object_path = "../data/BACKUPS/full_pipe/" + str(object) + "/" + str(object) + "_final.ply"
-    
-        gsply_handler = GSPLY_Handler(path, str(object), opt_object=opt_object, opt=opt)
-        gsply_handler.renderer.initialize(object_path, no_transform=True, no_rotation=True, blob_init_size=0.0001, num_pts_init=1, flip_z=False, normalize=False)
-        image_path = "../data/test_images/high_elevation/" + str(object) + "/" + str(object) + "_high_elev"
-        for i in range(0,8):
-            azimuth = opt_object.reference_angle_hor + 45.0 * i
-            iter_angle = 45.0 * i
-            gsply_handler.train_step(image_path, azimuth, iter_angle, -10.0) 
-    '''

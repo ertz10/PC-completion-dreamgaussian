@@ -1,5 +1,5 @@
 AABB: #[-0.1, 0.1, -0.2, 0.0, 0.1, 0.1]
-init_sphere_radius: 1.0
+init_sphere_radius: 0.3
 
 visible_angles: [[120, 200]]
 reference_angle_hor:  170 #an estimated angle at which the object was captured
@@ -13,6 +13,8 @@ dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: "data/garden_desk"
 load: "data/garden_desk/garden_desk_cropped.ply"
+isRawPCD: false
+rawPCDInitScales: [0.003, 0.003, 0.003]
 
 num_pts_init: 5_000
 

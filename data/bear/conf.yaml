@@ -1,6 +1,6 @@
 #AABB: [-0.2, 0.4, -0.1, -0.1, -0.1, 0.1] # x, up, z
 AABB: #[-0.3, 0.3, -0.3, -0.3, -0.3, 0.3] # x, up, z / if AABB is not given, uniform sphere sampling is applied
-init_sphere_radius: 1.0
+init_sphere_radius: 0.25 # acts as multiplier to the bounding box radius
 visible_angles: [[80, 100], [270, 290]]
 reference_angle_hor:  95 #an estimated angle at which the object was captured (horizontal)
 reference_angle_ver:  -5 #an estimated angle at which the object was captured (vertical)
@@ -13,8 +13,10 @@ dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: "data/bear"
 load: "data/bear/bear_cropped.ply"
+isRawPCD: false
+rawPCDInitScales: [0.003, 0.003, 0.003]
 
-num_pts_init: 50_000
+num_pts_init: 5_000
 
 max_steps: 6000 # ATTENTION: change in text_mv.yaml as well
 max_steps_refine: 2000 # ATTENTION: change in text.yaml as well

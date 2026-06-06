@@ -508,7 +508,7 @@ class GaussianModel:
             l.append('rot_{}'.format(i))
         return l
 
-    def save_ply(self, path):
+    def save_ply(self, path, path_static):
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         #xyz = self._xyz.detach().cpu().numpy()
@@ -544,6 +544,23 @@ class GaussianModel:
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
+
+        # Also save the static part for vis purposes
+        xyz = self.original_xyz.detach().cpu().numpy()
+        normals = np.zeros_like(xyz)
+        f_dc = self.original_featuresdc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = self.original_features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = self.original_opacity.detach().cpu().numpy()
+        scale = self.original_scaling.detach().cpu().numpy()
+        rotation = self.original_rotation.detach().cpu().numpy()
+
+        elements = np.empty(xyz.shape[0], dtype=dtype_full)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        elements[:] = list(map(tuple, attributes))
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path_static)
+
+
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01)) #modified
@@ -840,7 +857,8 @@ class GaussianModel:
         #'''
 
         if isRawPCD:
-            init_scales = torch.log(torch.tensor((0.001, 0.001, 0.001)))
+            #init_scales = torch.log(torch.tensor((0.001, 0.001, 0.001)))
+            init_scales = torch.log(torch.tensor(self.opt_object.rawPCDInitScales))
             scales = np.repeat([init_scales], len(xyz), axis = 0)
             rots = np.repeat([[1, 0, 0, 0]], len(xyz), axis = 0)
         else:
@@ -912,7 +930,7 @@ class GaussianModel:
 
         opt_rots = self.opt_object.rotation if self.opt_alignment == None else self.opt_alignment.rotation # used for trellis
             
-        if transform_splats_only:
+        if transform_splats_only: # transforms only local rotation and local scale of splats, needed for trellis
             rotation1 = trimesh.transformations.rotation_matrix(opt_rots[0], [1, 0, 0], [0, 0, 0])
             rotation2 = trimesh.transformations.rotation_matrix(opt_rots[1], [0, 0, 1], [0, 0, 0])
             rotation3 = trimesh.transformations.rotation_matrix(opt_rots[2], [0, 1, 0], [0, 0, 0])
@@ -947,12 +965,24 @@ class GaussianModel:
 
         
         #if self.opt_object.AABB is None:
-        if self.opt_object.AABBCenter is None:
+        try:
+            # TODO instead of sphere, do cube sampling
+            #'''
+            BBCenter = self.opt_object.AABBCenter
+            BBScale = self.opt_object.AABBScale
+            x = np.random.uniform(low=BBCenter[0]-BBScale[0]/2.0, high=BBCenter[0]+BBScale[0]/2.0, size=num_pts)
+            y = np.random.uniform(low=BBCenter[1]-BBScale[1]/2.0, high=BBCenter[1]+BBScale[1]/2.0, size=num_pts)
+            z = np.random.uniform(low=BBCenter[2]-BBScale[2]/2.0, high=BBCenter[2]+BBScale[2]/2.0, size=num_pts)
+            #'''
+        except:    
+            print("Use object's bounding box radius")
             # radius depending on bounding box of object
             delta_x = np.abs(np.max(xyz[0])) + np.abs(np.min(xyz[0]))
             delta_y = np.abs(np.max(xyz[1])) + np.abs(np.min(xyz[1]))
             delta_z = np.abs(np.max(xyz[2])) + np.abs(np.min(xyz[2]))
-            radius = np.max(np.array([delta_x, delta_y, delta_z]))# / 2.0
+            radius = np.max(np.array([delta_x, delta_y, delta_z])) * self.opt_object.init_sphere_radius #/ 4.0# / 2.0
+            #radius = np.min(np.array([delta_x, delta_y, delta_z])) #/ 4.0# / 2.0
+            print("radius: ", radius)
 
             # init from random point cloud
             #'''
@@ -976,15 +1006,6 @@ class GaussianModel:
             y = np.random.uniform(low=y_min, high=y_max, size=num_pts)
             z = np.random.uniform(low=z_min, high=z_max, size=num_pts)
             '''
-        else:
-            # TODO instead of sphere, do cube sampling
-            #'''
-            BBCenter = self.opt_object.AABBCenter
-            BBScale = self.opt_object.AABBScale
-            x = np.random.uniform(low=BBCenter[0]-BBScale[0]/2.0, high=BBCenter[0]+BBScale[0]/2.0, size=num_pts)
-            y = np.random.uniform(low=BBCenter[1]-BBScale[1]/2.0, high=BBCenter[1]+BBScale[1]/2.0, size=num_pts)
-            z = np.random.uniform(low=BBCenter[2]-BBScale[2]/2.0, high=BBCenter[2]+BBScale[2]/2.0, size=num_pts)
-            #'''
         xyz_2 = np.stack((x, y, z), axis=1)
 
         print("XYZ_2: ", xyz_2.shape)

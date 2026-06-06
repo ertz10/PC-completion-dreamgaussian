@@ -75,6 +75,11 @@ def get_images(im0_path, im1_path):
 
     return im0, im1
 
+def get_image(img_path):
+    im = Image.open(img_path)
+    im = fn.to_tensor(im)
+    return im
+
 
 def compute_metrics(model='', objects=None, folder_path=''):
     # ABLATION: no preservation loss
@@ -108,8 +113,10 @@ def compute_metrics(model='', objects=None, folder_path=''):
         depth0_path = "data/test_images/input/" + str(object) + "/" + str(object) + "_input_0_depth.png"
         depth1_path = "data/test_images/" + folder_path + "/" + model + "/" + str(object) + "/" + str(object) + "_" + model + "_0_depth.png"
         mask_path = "data/test_images/input/" + str(object) + "/" + str(object) + "_input_0_alpha.png"
+        object_mask_path = "data/test_images/" + folder_path + "/" + model + "/" + str(object) + "/" + str(object) + "_" + model + "_0_alpha.png"
         alpha_path = "data/" + str(object) + "/" + str(object) + "_static_mask.png"
         im0, im1, mask = get_images_3(im0_path, im1_path, mask_path)
+        object_mask = get_image(object_mask_path)
         im2, im3 = get_images(im2_path, im3_path)
         im4, im5 = get_images(im4_path, im5_path)
         im6, im7 = get_images(im6_path, im7_path)
@@ -120,19 +127,23 @@ def compute_metrics(model='', objects=None, folder_path=''):
         #im1 = ( ((im1 + 1.0) / 2.0) * alpha + ((im0 + 1.0) / 2.0) * (torch.ones((3, 256, 256), dtype=torch.float) - alpha) ) * 2.0 - 1.0
         
         # binarize alpha to create mask
-        mask = mask > 0.15
+        mask = mask > 0.55 # make threshold stronger ? 
+        # TODO combine with test objects masks to account only for regions inside both masks, instead of calculating regions that are in the background
+        object_mask = object_mask > 0.55
+        mask = torch.logical_and(mask, object_mask) # intersect both masks
         mask = mask.int() 
+        #object_mask = object_mask.int()
 
         debug_im = fn.to_pil_image(im1) #fn.to_pil_image((im1 + 1.0) / 2.0)
         debug_im2 = fn.to_pil_image(im0)
         debug_im3 = fn.to_pil_image(depth0)
         debug_im4 = fn.to_pil_image(depth1)
         debug_im5 = fn.to_pil_image(mask.float())
-        #debug_im.save("data/metrics/clip_debug_trellis/" + str(object) + "/" + str(object) + "_im1.png")
-        #debug_im2.save("data/metrics/clip_debug_trellis/" + str(object) + "/" + str(object) + "_im0.png")
-        #debug_im3.save("data/metrics/mse_debug_trellis/" + str(object) + "/" + str(object) + "_depth0.png")
-        #debug_im4.save("data/metrics/mse_debug_trellis/" + str(object) + "/" + str(object) + "_depth1.png")
-        #debug_im5.save("data/metrics/mse_debug_trellis/" + str(object) + "/" + str(object) + "_mask.png")
+        debug_im.save("data/metrics/clip_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_im1.png")
+        debug_im2.save("data/metrics/clip_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_im0.png")
+        debug_im3.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_depth0.png")
+        debug_im4.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_depth1.png")
+        debug_im5.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_mask.png")
 
         
         imgs = [im0, im1, im2, im3, im4, im5, im6, im7]
@@ -183,17 +194,22 @@ if __name__ == "__main__":
 
     import os
 
-    test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish", "bear", "bicycle", "bonsai", "garden_desk", "train", "truck"]
+    test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", 
+                    "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", 
+                    "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish",
+                    "bear", "bicycle", "bonsai", "garden_desk", "train", "truck",
+                    "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
     
     with torch.no_grad():
         #for object in test_objects:
             #print("Max val: ", im0.max())
             #print("Min val: ", im0.min())
         compute_metrics("input", objects=test_objects)
-        #compute_metrics("full", objects=test_objects)
-        #compute_metrics("trellis", objects=test_objects, folder_path="baselines/")
-        #compute_metrics("instantmesh", objects=test_objects, folder_path="baselines/")
+        compute_metrics("full", objects=test_objects)
+        compute_metrics("trellis", objects=test_objects, folder_path="baselines/")
+        compute_metrics("instantmesh", objects=test_objects, folder_path="baselines/")
         compute_metrics("trellis_mv", objects=test_objects, folder_path="baselines/")
+        compute_metrics("tripoSG", objects=test_objects, folder_path="baselines/")
         #compute_metrics("no_preserve_loss", objects=test_objects)
         #compute_metrics("no_preserve_no_init_no_schedule", objects=test_objects)
         #compute_metrics("no_schedule", objects=test_objects)

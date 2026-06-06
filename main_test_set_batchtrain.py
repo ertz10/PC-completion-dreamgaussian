@@ -69,6 +69,21 @@ if __name__ == "__main__":
 
     # lidar scans
     wooden_bench = False
+    christmas_tree = False
+    coffee_machine = False
+    sofa = False
+    wardrobe = False
+    lamp = False
+    fruit_bowl = False
+    globe = False
+
+    # mono depth
+    lego_bulldozer = False
+    flower = False
+    antique_bowl = False
+    onions = False
+    pot_plant = False
+    wood_bowl = False   
 
     #shoe = True #new
     #couch = True #new
@@ -91,21 +106,37 @@ if __name__ == "__main__":
     #bread = True
     #fish = True
 
-    #bear = True
-    #truck = True
-    #garden_desk = True
-    #train = True
-    #bicycle = True
-    #bonsai = True
+    bear = True
+    truck = True
+    garden_desk = True
+    train = True
+    bicycle = True
+    bonsai = True
 
-    #orc_warrior = True
-    #trumpet = True
-    #diner_seats = True
-    #pixel_cat = True
-    #####hot_chocolate = True # discarded
+    '''
+    # ablation looks good with partial meshes, no reprocess needed!
+    orc_warrior = True
+    trumpet = True
+    diner_seats = True
+    pixel_cat = True
     flip_flop = True
-
-    #wooden_bench = True
+    '''
+    # reprocess ablation on all lidar scans
+    # lidar scans
+    wooden_bench = True
+    coffee_machine = True
+    sofa = True
+    wardrobe = True
+    globe = True
+    
+    # mono depth
+    lego_bulldozer = True
+    flower = True # no reprocess needed
+    onions = True # no reprocess needed
+    pot_plant = True
+    wood_bowl = True
+    
+    
 
 
 
@@ -490,10 +521,155 @@ if __name__ == "__main__":
     ########## wooden bench ##############
     cmd = "python main.py --config configs/text_mv.yaml "
     prompt = "prompt=\"a wooden bench\" "
-    save_path = "save_path=wooden_bench "
-    object_conf = "--object_conf=data/wooden_bench/conf.yaml"
+    save_path = "save_path=LIDAR/wooden_bench "
+    object_conf = "--object_conf=data/LIDAR/wooden_bench/conf.yaml"
 
     command = cmd + prompt + save_path + object_conf
     if wooden_bench:
+        p = Popen(command)
+        p.communicate()
+
+    ########## christmas tree ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a decorated christmas tree\" "
+    save_path = "save_path=LIDAR/christmas_tree "
+    object_conf = "--object_conf=data/LIDAR/christmas_tree/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if christmas_tree:
+        p = Popen(command)
+        p.communicate()
+
+    ########## coffee machine ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a full automatic red and silver coffee machine\" "
+    save_path = "save_path=LIDAR/coffee_machine "
+    object_conf = "--object_conf=data/LIDAR/coffee_machine/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if coffee_machine:
+        p = Popen(command)
+        p.communicate()
+
+    ########## sofa ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a brown sofa with pillows\" "
+    save_path = "save_path=LIDAR/sofa "
+    object_conf = "--object_conf=data/LIDAR/sofa/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if sofa:
+        p = Popen(command)
+        p.communicate()
+
+    ########## wardrobe ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a vintage wooden wardrobe\" "
+    save_path = "save_path=LIDAR/wardrobe "
+    object_conf = "--object_conf=data/LIDAR/wardrobe/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if wardrobe:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## lamp ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a lamp with a vintage lampshade\" "
+    save_path = "save_path=LIDAR/lamp "
+    object_conf = "--object_conf=data/LIDAR/lamp/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if lamp:
+        p = Popen(command)
+        p.communicate()
+
+    ########## fruit_bowl ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a glass bowl fruits inside\" "
+    save_path = "save_path=LIDAR/fruit_bowl "
+    object_conf = "--object_conf=data/LIDAR/fruit_bowl/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if fruit_bowl:
+        p = Popen(command)
+        p.communicate()
+
+    ########## fruit_bowl ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a world globe with brownish, desaturated colors\" "
+    save_path = "save_path=LIDAR/globe "
+    object_conf = "--object_conf=data/LIDAR/globe/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if globe:
+        p = Popen(command)
+        p.communicate()
+
+
+    ########## lego bulldozer ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a yellow lego bulldozer\" "
+    save_path = "save_path=MONO_DEPTH/lego_bulldozer "
+    object_conf = "--object_conf=data/MONO_DEPTH/lego_bulldozer/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if lego_bulldozer:
+        p = Popen(command)
+        p.communicate()
+
+    ########## flower ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"an orange flower\" "
+    save_path = "save_path=MONO_DEPTH/flower "
+    object_conf = "--object_conf=data/MONO_DEPTH/flower/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if flower:
+        p = Popen(command)
+        p.communicate()
+
+    ########## antique bowl ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a standing antique ceramic bowl with intricate details\" "
+    save_path = "save_path=MONO_DEPTH/antique_bowl "
+    object_conf = "--object_conf=data/MONO_DEPTH/antique_bowl/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if antique_bowl:
+        p = Popen(command)
+        p.communicate()
+
+    ########## onions ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"three onions packed in a net\" "
+    save_path = "save_path=MONO_DEPTH/onions "
+    object_conf = "--object_conf=data/MONO_DEPTH/onions/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if onions:
+        p = Popen(command)
+        p.communicate()
+
+    ########## pot plant  ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a plant in a brown clay pot\" "
+    save_path = "save_path=MONO_DEPTH/pot_plant "
+    object_conf = "--object_conf=data/MONO_DEPTH/pot_plant/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if pot_plant:
+        p = Popen(command)
+        p.communicate()
+
+    ########## wood bowl ##############
+    cmd = "python main.py --config configs/text_mv.yaml "
+    prompt = "prompt=\"a wooden bowl with fruits inside\" "
+    save_path = "save_path=MONO_DEPTH/wood_bowl "
+    object_conf = "--object_conf=data/MONO_DEPTH/wood_bowl/conf.yaml"
+
+    command = cmd + prompt + save_path + object_conf
+    if wood_bowl:
         p = Popen(command)
         p.communicate()

@@ -27,8 +27,12 @@ if __name__ == "__main__":
     if os.path.exists("data/metrics/lpips.txt"):
         os.remove("data/metrics/lpips.txt")
 
-    test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish"]
-
+    test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", 
+                    "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", 
+                    "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish",
+                    "bear", "bicycle", "bonsai", "garden_desk", "train", "truck",
+                    "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
+    
     for object in test_objects:
         #print("Max val: ", im0.max())
         #print("Min val: ", im0.min())

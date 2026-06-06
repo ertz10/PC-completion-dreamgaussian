@@ -1,5 +1,5 @@
 AABB: #[-0.1, 0.1, -0.2, 0.0, 0.1, 0.1]
-init_sphere_radius: 1.0
+init_sphere_radius: 0.4
 
 visible_angles: [[200, 240]]
 reference_angle_hor:  220 #an estimated angle at which the object was captured
@@ -13,8 +13,10 @@ dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
 data_path: "data/bicycle"
 load: "data/bicycle/bicycle_cropped.ply"
+isRawPCD: false
+rawPCDInitScales: [0.003, 0.003, 0.003]
 
-num_pts_init: 50_000
+num_pts_init: 5_000
 
 max_steps: 6000 # ATTENTION: change in text_mv.yaml as well
 max_steps_refine: 5000 # ATTENTION: change in text.yaml as well

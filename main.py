@@ -56,7 +56,14 @@ class GUI:
         # renderer
         self.renderer = Renderer(sh_degree=self.opt.sh_degree, opt_object=self.opt_object)
         # mesh renderer for rendering aabbs in case of mesh completion
-        self.mesh_renderer = MeshRenderer(opt, opt_object=opt_object, loadAABBbox=True).to(self.device)
+        try:
+            opt_object.AABBMesh
+            self.mesh_completion = True
+        except:
+            self.mesh_completion = False
+
+        if self.mesh_completion:
+            self.mesh_renderer = MeshRenderer(opt, opt_object=opt_object, loadAABBbox=True).to(self.device)
         self.gaussain_scale_factor = 1
 
         # input image
@@ -237,7 +244,7 @@ class GUI:
             if self.opt.mvdream:
                 print(f"[INFO] loading MVDream...")
                 from guidance.mvdream_utils import MVDream
-                self.guidance_sd = MVDream(self.device)
+                self.guidance_sd = MVDream(self.device, mesh_completion=self.mesh_completion)
                 print(f"[INFO] loaded MVDream!")
             elif self.opt.imagedream:
                 print(f"[INFO] loading ImageDream...")
@@ -459,18 +466,19 @@ class GUI:
                 out = self.renderer.render(cur_cam, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats) 
                 out_static = self.renderer.render(cur_cam, bg_color=bg_color, only_static_splats=True)
 
-                ssaa = min(2.0, max(0.125, 2 * np.random.random()))
-                out_mesh = self.mesh_renderer.render(pose, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
-                out_mesh_albedo = out_mesh['depth'] # shape [H, W, C]
-                out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 1, 2)
-                out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 0, 1).unsqueeze(0)
-                #out_mesh_depth = out_mesh['depth']
-                out_mesh_alpha = out_mesh['alpha']
-                out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 1, 2)
-                out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 0, 1).unsqueeze(0)
+                ssaa = 1.0 #min(2.0, max(0.125, 2 * np.random.random()))
+                if self.mesh_completion:
+                    out_mesh = self.mesh_renderer.render(pose, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
+                    out_mesh_albedo = out_mesh['depth'] # shape [H, W, C]
+                    out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 1, 2)
+                    out_mesh_albedo = torch.swapaxes(out_mesh_albedo, 0, 1).unsqueeze(0)
+                    #out_mesh_depth = out_mesh['depth']
+                    out_mesh_alpha = out_mesh['alpha']
+                    out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 1, 2)
+                    out_mesh_alpha = torch.swapaxes(out_mesh_alpha, 0, 1).unsqueeze(0)
 
-                AABBimagesalpha.append(out_mesh_alpha)
-                AABBimages.append(out_mesh_albedo)
+                    AABBimagesalpha.append(out_mesh_alpha)
+                    AABBimages.append(out_mesh_albedo)
 
                 
                 # DEBUG render
@@ -563,17 +571,18 @@ class GUI:
                         out_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=self.opt_object.only_dynamic_splats)
                         out_static_i = self.renderer.render(cur_cam_i, bg_color=bg_color, only_static_splats=True)
 
-                        out_mesh_i = self.mesh_renderer.render(pose_i, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
-                        out_mesh_i_albedo = out_mesh_i['depth']
-                        out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 1, 2)
-                        out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 0, 1).unsqueeze(0)
-                        #out_mesh_i_depth = out_mesh['depth']
-                        out_mesh_i_alpha = out_mesh_i['alpha']
-                        out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 1, 2)
-                        out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 0, 1).unsqueeze(0)
+                        if self.mesh_completion:
+                            out_mesh_i = self.mesh_renderer.render(pose_i, self.cam.perspective, render_resolution, render_resolution, ssaa=ssaa, background=torch.tensor([1.0, 1.0, 1.0]))
+                            out_mesh_i_albedo = out_mesh_i['depth']
+                            out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 1, 2)
+                            out_mesh_i_albedo = torch.swapaxes(out_mesh_i_albedo, 0, 1).unsqueeze(0)
+                            #out_mesh_i_depth = out_mesh['depth']
+                            out_mesh_i_alpha = out_mesh_i['alpha']
+                            out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 1, 2)
+                            out_mesh_i_alpha = torch.swapaxes(out_mesh_i_alpha, 0, 1).unsqueeze(0)
 
-                        AABBimagesalpha.append(out_mesh_i_alpha)
-                        AABBimages.append(out_mesh_i_albedo)
+                            AABBimagesalpha.append(out_mesh_i_alpha)
+                            AABBimages.append(out_mesh_i_albedo)
 
 
                         out_alpha = self.renderer.render(cur_cam_i, bg_color=bg_color, only_dynamic_splats=False)
@@ -646,7 +655,7 @@ class GUI:
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
                                                                                                                                                                                 dynamic_depth_images=dynamic_depth_images, static_depth_images=static_depth_images, 
                                                                                                                                                                                 current_cam_hors=hors, captured_angles_hor=self.captured_angles_hor, object_params=self.opt_object, use_recon_loss=self.opt.use_recon_loss, 
-                                                                                                                                                                                only_dynamic_splats=self.opt_object.only_dynamic_splats, AABBimages=AABBimages, AABBimagesalpha=AABBimagesalpha)
+                                                                                                                                                                                only_dynamic_splats=self.opt_object.only_dynamic_splats, AABBimages=AABBimages, AABBimagesalpha=AABBimagesalpha, sds_model_config=self.opt)
                 else:
                     loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, out_debug["image"].unsqueeze(0), guidance_scale=self.opt_object.guidance_scale, step_ratio=step_ratio if self.opt.anneal_timestep else None, customLoss=self.customLoss,
                                                                                                                                                                                 dynamic_images=dynamic_images, static_images=static_images, 
@@ -959,7 +968,8 @@ class GUI:
             #path = os.path.join(self.opt.outdir, self.opt.save_path + '_model' + str(index) + '.ply')
             #path = os.path.join(self.opt.outdir, self.opt.save_path + '_model.ply')
             path = os.path.join(self.opt_object.data_path + '/' + self.opt_object.data_path.split('/')[-1] + '_final.ply')
-            self.renderer.gaussians.save_ply(path)
+            path_static = os.path.join(self.opt_object.data_path + '/' + self.opt_object.data_path.split('/')[-1] + '_static.ply')
+            self.renderer.gaussians.save_ply(path, path_static)
 
         print(f"[INFO] save model to {path}.")
 

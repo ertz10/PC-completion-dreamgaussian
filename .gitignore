@@ -37,3 +37,5 @@ gs_ply/
 #metrics/
 BACKUPS/
 baselines/
+
+*.ply

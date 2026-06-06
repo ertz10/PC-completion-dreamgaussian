@@ -5,7 +5,7 @@ AABBMesh: "data/unit_box.obj"
 init_sphere_radius: 1.0
 
 visible_angles: [[320, 60]] #[[180, 250]]
-reference_angle_hor:  20 #an estimated angle at which the object was captured
+reference_angle_hor:  200 #an estimated angle at which the object was captured
 reference_angle_ver:  -20 #an estimated angle at which the object was captured (vertical)
 
 # transformations

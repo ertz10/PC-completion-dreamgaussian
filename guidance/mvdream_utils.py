@@ -34,6 +34,7 @@ class MVDream(nn.Module):
         ckpt_path=None,
         #t_range=[0.001, 0.98],
         t_range=[0.02, 0.98],
+        mesh_completion=False
     ):
         super().__init__()
 
@@ -84,6 +85,8 @@ class MVDream(nn.Module):
 
         # CUSTOM
         self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
+
+        self.mesh_completion = mesh_completion
 
     @torch.no_grad()
     def get_text_embeds(self, prompts, negative_prompts):
@@ -405,7 +408,8 @@ class MVDream(nn.Module):
         use_recon_loss=True,
         only_dynamic_splats=False,
         AABBimages=None,
-        AABBimagesalpha=None
+        AABBimagesalpha=None,
+        sds_model_config=None
     ):
 
         self.train_steps += 1
@@ -443,8 +447,8 @@ class MVDream(nn.Module):
             t = torch.randint(self.min_step, self.max_step + 1, (real_batch_size,), dtype=torch.long, device=self.device).repeat(4)
 
         '''
-        no_schedule = False
-        if no_schedule:
+        #no_schedule = False
+        if sds_model_config.run_vanilla:
             t = torch.randint(self.min_step, self.max_step + 1, (1,), dtype=torch.long, device=self.device).repeat(4)
         else:
             '''
@@ -700,12 +704,13 @@ class MVDream(nn.Module):
             
             #target = ((latents_noisy - extract_into_tensor(self.model.sqrt_one_minus_alphas_cumprod, t, latents_noisy.shape) * noise_pred) / (extract_into_tensor(self.model.sqrt_alphas_cumprod, t, latents_noisy.shape))).detach()
 
-            if self.train_steps <= object_params.ref_loss_nomask_until:
+            if not sds_model_config.run_vanilla and self.train_steps <= object_params.ref_loss_nomask_until:
                 # only consider 1st image at the beginning
                 #loss = F.mse_loss(latents[0].float(), target[0], reduction='sum')
                 loss = F.mse_loss(latents[0].float(), latents[0].float(), reduction='sum')
             else:
-                if (object_params.sds_loss_only):
+                #if (object_params.sds_loss_only):
+                if (sds_model_config.run_vanilla):
                     loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0] #0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
                 else:
                     #loss = F.mse_loss(latents.float(), target, reduction='sum')
@@ -743,34 +748,33 @@ class MVDream(nn.Module):
             static_images = static_images[:,:3]
 
             static_depth_images = torch.vstack((static_depth_images))
-            AABBimages = torch.vstack((AABBimages))
-            AABBimagesalpha = torch.vstack((AABBimagesalpha))
+            if self.mesh_completion:
+                AABBimages = torch.vstack((AABBimages))
+                AABBimagesalpha = torch.vstack((AABBimagesalpha))
             if (valid_cams.shape[0] != 0):
 
                 for valid_cam in valid_cams:
                     print("VALID CAM: " + str(valid_cam))
                     with torch.no_grad():
                         # TODO compare aabbdepth and static depth
-                        print("AABB depth min max: ", AABBimages.min(), AABBimages.max())
-                        print("AABB data type: ", AABBimages.dtype)
-                        print("static depth images min max: ", static_depth_images.min(), static_depth_images.max())
-                        depth_compare = AABBimages < static_depth_images # bool mask
-                        depth_compare = F.interpolate(depth_compare.float(), (img_width, img_height), mode="bilinear", align_corners=False)
-                        depth_compare = torch.repeat_interleave(depth_compare, 3, 1)
-                        box_mask = AABBimagesalpha > 0.0 # take alpha channel only
-                        box_mask = F.interpolate(box_mask.float(), (img_width, img_height), mode="bilinear", align_corners=False)
-                        box_mask = torch.repeat_interleave(box_mask, 3, 1)
+                        #print("AABB depth min max: ", AABBimages.min(), AABBimages.max())
+                        #print("AABB data type: ", AABBimages.dtype)
+                        #print("static depth images min max: ", static_depth_images.min(), static_depth_images.max())
                         static_alpha = static_alpha > 0.15
-                        #static_alpha[depth_compare.int().bool()] = 1.0 #0.0
-                        
-                        #static_alpha = static_region
-                        #bool_mask = torch.logical_and(static_alpha, box_mask)[valid_cam].int() # static_alpha[valid_cam].int()
-                        #bool_mask = torch.logical_and(static_alpha, depth_compare)[valid_cam].int().float() # static_alpha[valid_cam].int()
-                        #bool_mask = torch.subtract(box_mask, bool_mask)[valid_cam].int() # subtract difference from original box mask
-                        box_mask = torch.logical_and(box_mask, depth_compare).int().float() # basically subtract the cutout parts from the box mask
-                        # TODO  add or subtract ?= from static alpha ?
-                        bool_mask = torch.subtract(static_alpha.int(), box_mask.int())[valid_cam].clamp(0, 1)
-                        #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
+                        if self.mesh_completion:
+                            depth_compare = AABBimages < static_depth_images # bool mask
+                            depth_compare = F.interpolate(depth_compare.float(), (img_width, img_height), mode="bilinear", align_corners=False)
+                            depth_compare = torch.repeat_interleave(depth_compare, 3, 1)
+                            box_mask = AABBimagesalpha > 0.0 # take alpha channel only
+                            box_mask = F.interpolate(box_mask.float(), (img_width, img_height), mode="bilinear", align_corners=False)
+                            box_mask = torch.repeat_interleave(box_mask, 3, 1)
+                            
+                            box_mask = torch.logical_and(box_mask, depth_compare).int().float() # basically subtract the cutout parts from the box mask
+                            # TODO  add or subtract ?= from static alpha ?
+                            bool_mask = torch.subtract(static_alpha.int(), box_mask.int())[valid_cam].clamp(0, 1)
+                            #write_images_to_drive(bool_mask.squeeze(0) * 1.0, string="mask")
+                        else:
+                            bool_mask = static_alpha[valid_cam].int()
                         #
                         kernel = np.ones((3, 3), dtype=np.float32)
                         kernel_tensor = torch.Tensor(np.expand_dims(np.expand_dims(kernel, 0), 0))
@@ -785,12 +789,14 @@ class MVDream(nn.Module):
                     
                     if self.train_steps <= object_params.ref_loss_nomask_until:
                         reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum').detach()
-                        if (not object_params.sds_loss_only):
+                        #if (not object_params.sds_loss_only):
+                        if (not sds_model_config.run_vanilla):
                             loss += object_params.ref_loss_strength * F.mse_loss(colored_gauss_imgs_static[valid_cam], colored_gauss_imgs[valid_cam], reduction='sum')
                     else:
                         #loss += F.mse_loss(latents_dec[valid_cam, bool_mask], static_images[valid_cam, bool_mask], reduction='sum')
                         reference_loss = F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum').detach()
-                        if (not object_params.sds_loss_only and self.train_steps <= object_params.max_steps_ref_loss):
+                        #if (not object_params.sds_loss_only and self.train_steps <= object_params.max_steps_ref_loss):
+                        if (not sds_model_config.run_vanilla and not sds_model_config.no_preserve_loss and self.train_steps <= object_params.max_steps_ref_loss):
                             loss += object_params.ref_loss_strength * F.mse_loss(colored_gauss_imgs_static[valid_cam, bool_mask], colored_gauss_imgs[valid_cam, bool_mask], reduction='sum')
 
                     
@@ -828,7 +834,8 @@ class MVDream(nn.Module):
                         self.batch_write_test_images_to_drive(colored_gauss_imgs_vis, object_params, string=r"_optimized_rg_vis")
                         self.batch_write_test_images_to_drive(colored_gauss_imgs_static_vis, object_params, string=r"_static_rg_vis")
                         self.batch_write_test_images_to_drive(static_depth_images, object_params, string=r"_depth_static")
-                        self.batch_write_test_images_to_drive(AABBimages, object_params, string=r"_AABB")
+                        if self.mesh_completion:
+                            self.batch_write_test_images_to_drive(AABBimages, object_params, string=r"_AABB")
                         #self.batch_write_test_images_to_drive(depth_compare, object_params, string=r"_depth_compare")
                         self.batch_write_test_images_to_drive(static_alpha.float(), object_params, string=r"_static_alpha")
                         #self.batch_write_test_images_to_drive(box_mask, object_params, string=r"_box_mask")

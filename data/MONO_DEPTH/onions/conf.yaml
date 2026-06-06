@@ -2,19 +2,20 @@ AABB: #[-0.1, 0.1, -0.2, 0.0, 0.1, 0.1]
 #AABBMesh: "data/unit_box.obj"
 init_sphere_radius: 1.0
 
-visible_angles: [[180, 250]]
-reference_angle_hor:  220 #an estimated angle at which the object was captured
-reference_angle_ver:  -20 #an estimated angle at which the object was captured (vertical)
+visible_angles: [[185, 195]]
+reference_angle_hor:  190 #an estimated angle at which the object was captured
+reference_angle_ver:  -5 #an estimated angle at which the object was captured (vertical)
 
 # transformations
 rotation: [0.0, 0.0, 0.0]
-translation: [0.0, 0.0, 0.0] 
-scale: 1.6
+translation: [0.0, 0.0, -0.1] 
+scale: 1.8
 dyn_gs_init_scale: [0.1, 0.1, 0.1]
 
-data_path: "data/wooden_bench"
-load: "data/wooden_bench/wooden_bench.ply"
+data_path: "data/MONO_DEPTH/onions"
+load: "data/MONO_DEPTH/onions/onions.ply"
 isRawPCD: true
+rawPCDInitScales: [0.002, 0.002, 0.002]
 
 num_pts_init: 5_000
 
@@ -25,7 +26,7 @@ batch_size_tex_refine: 1
 guidance_scale: 15.0
 
 max_steps_ref_loss: 4000
-ref_loss_nomask_until: 50 # mostly trains opacity => background opacity ~ 0
+ref_loss_nomask_until: 70 # mostly trains opacity => background opacity ~ 0
 ref_loss_strength: 2.0 # must be > 0
 
 position_lr_factor: 10

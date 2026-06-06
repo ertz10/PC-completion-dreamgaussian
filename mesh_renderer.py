@@ -40,17 +40,20 @@ def make_divisible(x, m=8):
     return int(math.ceil(x / m) * m)
 
 class Renderer(nn.Module):
-    def __init__(self, opt, opt_object=None, loadAABBbox=False):
+    def __init__(self, opt, opt_object=None, loadAABBbox=False, loadMesh=None):
         
         super().__init__()
 
         self.opt = opt
         self.opt_object = opt_object
 
+
         if loadAABBbox:
             self.mesh = Mesh.load(self.opt_object.AABBMesh, resize=True) # unit size
             self.mesh.resize(self.opt_object.AABBScale)
             self.mesh.translate(self.opt_object.AABBCenter)
+        elif not loadMesh == None:
+            self.mesh = Mesh.load(loadMesh, resize=False)
         else:
             self.mesh = Mesh.load(self.opt.mesh, resize=False)
 

@@ -22,5 +22,10 @@
          garden_desk: 0.0
                train: 0.0
                truck: 0.0
+         diner_seats: 0.0
+           flip_flop: 0.0
+         orc_warrior: 0.0
+           pixel_cat: 0.0
+             trumpet: 0.0
 
 Mean: 0.0
