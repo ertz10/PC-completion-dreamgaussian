@@ -5,19 +5,16 @@ import numpy as np
 
 import torch.nn.functional as F
 
+import lpips
+
 import open_clip
-'''def compute_lpips(im0, im1):
+
+def compute_lpips(im0, im1, mask):
     
     loss_fn = lpips.LPIPS(net='alex')
 
-    d = loss_fn.forward(im0, im1) # normalize images to [-1, 1] before computing 
+    d = loss_fn.forward(im0 * mask, im1 * mask) # normalize images to [-1, 1] before computing TODO ?
     return d
-'''
-
-#def compute_clip_score(im0, im1):
-#    metric = CLIPScore(model_name_or_path='openai/clip-vit-base-patch16')
-#    score = metric(im0, im1) / 100.0
-#    return score.detach().round() 
 
 
 def compute_mse(im0, im1, mask): # im1 gt
@@ -90,6 +87,9 @@ def compute_metrics(model='', objects=None, folder_path=''):
     if os.path.exists("data/metrics/mse_rgb_" + model + ".txt"):
         os.remove("data/metrics/mse_rgb_" + model + ".txt")
 
+    if os.path.exists("data/metrics/lpips_" + model + ".txt"):
+        os.remove("data/metrics/lpips_" + model + ".txt")
+
     clip_scores = []
     mse_depth_scores = []
     mse_rgb_scores = []
@@ -134,16 +134,16 @@ def compute_metrics(model='', objects=None, folder_path=''):
         mask = mask.int() 
         #object_mask = object_mask.int()
 
-        debug_im = fn.to_pil_image(im1) #fn.to_pil_image((im1 + 1.0) / 2.0)
-        debug_im2 = fn.to_pil_image(im0)
-        debug_im3 = fn.to_pil_image(depth0)
-        debug_im4 = fn.to_pil_image(depth1)
-        debug_im5 = fn.to_pil_image(mask.float())
-        debug_im.save("data/metrics/clip_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_im1.png")
-        debug_im2.save("data/metrics/clip_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_im0.png")
-        debug_im3.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_depth0.png")
-        debug_im4.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_depth1.png")
-        debug_im5.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_mask.png")
+        #debug_im = fn.to_pil_image(im1) #fn.to_pil_image((im1 + 1.0) / 2.0)
+        #debug_im2 = fn.to_pil_image(im0)
+        #debug_im3 = fn.to_pil_image(depth0)
+        #debug_im4 = fn.to_pil_image(depth1)
+        #debug_im5 = fn.to_pil_image(mask.float())
+        #debug_im.save("data/metrics/clip_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_im1.png")
+        #debug_im2.save("data/metrics/clip_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_im0.png")
+        #debug_im3.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_depth0.png")
+        #debug_im4.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_depth1.png")
+        #debug_im5.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_mask.png")#
 
         
         imgs = [im0, im1, im2, im3, im4, im5, im6, im7]
@@ -177,6 +177,13 @@ def compute_metrics(model='', objects=None, folder_path=''):
                 f.write(" ")
             f.write(str(object) + ": " + str(mse_rgb.item()) + "\n")
 
+        #lpips = compute_lpips(im0, im1, mask)
+        #lpips_scores = np.append(lpips_scores, lpips.item())
+        #with open("data/metrics/lpips_" + model + ".txt", "a") as f:
+        #    for i in range(0, 20 - len(str(object))):
+        #        f.write(" ")
+        #    f.write(str(object) + ": " + str(lpips.item()) + "\n")
+
     with open("data/metrics/clip_" + model + ".txt", "a") as f:
         f.write("\nMean: " + str(np.mean(clip_scores)))
 
@@ -185,6 +192,9 @@ def compute_metrics(model='', objects=None, folder_path=''):
 
     with open("data/metrics/mse_rgb_" + model + ".txt", "a") as f:
         f.write("\nMean: " + str(np.mean(mse_rgb_scores)))
+
+    #with open("data/metrics/lpips_" + model + ".txt", "a") as f:
+    #    f.write("\nMean: " + str(np.mean(lpips_scores)))
 
 
 if __name__ == "__main__":
@@ -198,7 +208,9 @@ if __name__ == "__main__":
                     "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", 
                     "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish",
                     "bear", "bicycle", "bonsai", "garden_desk", "train", "truck",
-                    "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
+                    "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet",
+                    "coffee_machine", "globe", "sofa", "wardrobe", "wooden_bench",
+                    "flower", "lego_bulldozer", "onions", "pot_plant", "wood_bowl"]
     
     with torch.no_grad():
         #for object in test_objects:
@@ -210,9 +222,9 @@ if __name__ == "__main__":
         compute_metrics("instantmesh", objects=test_objects, folder_path="baselines/")
         compute_metrics("trellis_mv", objects=test_objects, folder_path="baselines/")
         compute_metrics("tripoSG", objects=test_objects, folder_path="baselines/")
-        #compute_metrics("no_preserve_loss", objects=test_objects)
-        #compute_metrics("no_preserve_no_init_no_schedule", objects=test_objects)
-        #compute_metrics("no_schedule", objects=test_objects)
+        compute_metrics("no_preserve_loss", objects=test_objects)
+        compute_metrics("no_preserve_no_init_no_schedule", objects=test_objects)
+        compute_metrics("no_schedule", objects=test_objects)
 
             
 

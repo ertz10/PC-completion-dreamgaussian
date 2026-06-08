@@ -61,16 +61,7 @@ class test_capsule:
 
 if __name__ == "__main__":
     
-    test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", 
-                    "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", 
-                    "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish",
-                    "bear", "bicycle", "bonsai", "garden_desk", "train", "truck",
-                    "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
     
-    test_objects = ["coffee_machine", "globe", "sofa", "wardrobe", "wooden_bench",
-                    "flower", "lego_bulldozer", "onions", "pot_plant", "wood_bowl",
-                    "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet",
-                    "bear", "bicycle", "bonsai", "garden_desk", "train", "truck"]
     
     #test_objects = ["wooden_bench"]
     #test_objects = ["fish"]
@@ -226,7 +217,7 @@ if __name__ == "__main__":
 
     #test_capsules = [test_capsule_input, test_capsule_full, test_capsule_nplnoinos, test_capsule_nos, test_capsule_npl,
     #                 test_capsule_trellis, test_capsule_trellis_mv, test_capsule_instantmesh, test_capsule_triposg]
-    test_capsules = [test_capsule_input, test_capsule_full, test_capsule_nplnoinos,
+    test_capsules = [test_capsule_input, test_capsule_full, test_capsule_nplnoinos, test_capsule_nos, test_capsule_npl,
                      test_capsule_trellis, test_capsule_trellis_mv, test_capsule_instantmesh, test_capsule_triposg]
     #test_capsules = [
     #                 test_capsule_trellis, test_capsule_trellis_mv, test_capsule_instantmesh, test_capsule_triposg]
@@ -241,9 +232,24 @@ if __name__ == "__main__":
 
     #test_capsules = [test_capsule_instantmesh]
 
-    test_capsules = [test_capsule_instantmesh]
-    test_capsules = [test_capsule_nplnoinos]
+    #test_capsules = [test_capsule_instantmesh]
+    #test_capsules = [test_capsule_nplnoinos]
+
+    # use with input _cropped
+    #test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", 
+    #                "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", 
+    #                "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish",
+    #                "bear", "bicycle", "bonsai", "garden_desk", "train", "truck",
+    #                "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
+                
+    # use with input _static
+    test_objects = ["coffee_machine", "globe", "sofa", "wardrobe", "wooden_bench",
+                    "flower", "lego_bulldozer", "onions", "pot_plant", "wood_bowl"]
     
+    
+    #test_objects = ["bear", "bicycle", "bonsai", "garden_desk", "train", "truck", "banana_tuna"] # run again with _cropped instead of _static
+    
+    #test_objects = ["coffee_machine", "flip_flop"]
 
     from omegaconf import OmegaConf
 

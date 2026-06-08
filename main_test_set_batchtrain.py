@@ -113,14 +113,14 @@ if __name__ == "__main__":
     bicycle = True
     bonsai = True
 
-    '''
+    
     # ablation looks good with partial meshes, no reprocess needed!
     orc_warrior = True
     trumpet = True
     diner_seats = True
     pixel_cat = True
     flip_flop = True
-    '''
+    
     # reprocess ablation on all lidar scans
     # lidar scans
     wooden_bench = True

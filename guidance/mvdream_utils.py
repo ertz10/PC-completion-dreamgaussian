@@ -448,7 +448,7 @@ class MVDream(nn.Module):
 
         '''
         #no_schedule = False
-        if sds_model_config.run_vanilla:
+        if sds_model_config.run_vanilla or sds_model_config.no_schedule:
             t = torch.randint(self.min_step, self.max_step + 1, (1,), dtype=torch.long, device=self.device).repeat(4)
         else:
             '''

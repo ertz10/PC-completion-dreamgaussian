@@ -93,7 +93,7 @@ captured_camera_angles_only_until: 500
 geom_lr: 0.0001
 texture_lr: 0.2
 
-
+# ablation
 run_vanilla: False # run vanilla pipeline without preservation loss (no preserve loss, no init, no schedule)
-no_preserve_loss: True
-#no_schedule: True
+no_preserve_loss: False
+no_schedule: False

@@ -6,6 +6,8 @@ import numpy as np
 import torch.nn.functional as F
 
 import open_clip
+
+from met3r import MEt3R
 '''def compute_lpips(im0, im1):
     
     loss_fn = lpips.LPIPS(net='alex')
@@ -50,8 +52,41 @@ def compute_open_clip_score(im0, im1):
     return score
 '''
 
-def compute_met3r_score(im0, im1):
-    
+IMG_SIZE = 256
+metric = MEt3R(
+    img_size=IMG_SIZE,
+    use_norm=True,
+    backbone="dust3r",
+    feature_backbone="dino16",
+    feature_backbone_weights="mhamilton723/FeatUp",
+    upsampler="featup",
+    distance="cosine",
+    freeze=True,
+).cuda()
+
+def compute_met3r_score(im0, im1, mask):
+    # prepare inputs of shape (batch, views, channel, height, widtht)
+    inputs = F.interpolate(torch.vstack((im0, im1)), (IMG_SIZE, IMG_SIZE), mode="bilinear", align_corners=False)
+    inputs = inputs[:,:3] # strip alpha channel if present
+    inputs = inputs.unsqueeze(0).cuda() # size (1, 2, 3, IMG_SIZE, IMG_SIZE)
+    print(inputs.max()) # check what max value is and transfer to [-1, 1]
+    print(inputs.min())
+
+    inputs = inputs.clip(-1, 1)
+
+    score, *_ = metric(
+        images=input,
+        return_overlap_mask=False,
+        return_score_map=False,
+        return_projection=False
+    )
+
+    print("Met3r Score: ", score[mask].mean().item())
+
+    torch.cuda.empty_cache()
+
+    return score[mask].mean().item()
+
 
 
 def get_images_3(im0_path, im1_path, alpha_path=None):
@@ -184,7 +219,15 @@ def compute_metrics(model='', objects=None, folder_path=''):
             for i in range(0, 20 - len(str(object))):
                 f.write(" ")
             f.write(str(object) + ": " + str(mse_rgb.item()) + "\n")
-
+        '''
+        #met3r_score = compute_met3r_score(im0, im1, mask)
+        met3r_score = compute_met3r_score(im0, im3, mask) # take score(input_0, komplettiert_90)
+        met3r_scores = np.append(met3r_scores, met3r_score)
+        with open("data/metrics/met3r_" + model + ".txt", "a") as f:
+            for i in range(0, 20 - len(str(objects))):
+                f.write(" ")
+            f.write(str(object) + ": " + str(met3r_score) + "\n")
+    '''
     with open("data/metrics/clip_" + model + ".txt", "a") as f:
         f.write("\nMean: " + str(np.mean(clip_scores)))
 
@@ -193,10 +236,12 @@ def compute_metrics(model='', objects=None, folder_path=''):
 
     with open("data/metrics/mse_rgb_" + model + ".txt", "a") as f:
         f.write("\nMean: " + str(np.mean(mse_rgb_scores)))
-        '''
+    '''
 
-    met3r_score = compute_met3r_score(im0, im1, mask)
-    met3r_scores = np.append(met3r_scores, met3r_score.item())
+    with open("data/metrics/met3r_" + model + ".txt", "a") as f:
+        f.write("\nMean: " + str(np.mean(met3r_scores)))
+
+        
 
 
 if __name__ == "__main__":
@@ -224,9 +269,9 @@ if __name__ == "__main__":
         compute_metrics("instantmesh", objects=test_objects, folder_path="baselines/")
         compute_metrics("trellis_mv", objects=test_objects, folder_path="baselines/")
         compute_metrics("tripoSG", objects=test_objects, folder_path="baselines/")
-        #compute_metrics("no_preserve_loss", objects=test_objects)
+        compute_metrics("no_preserve_loss", objects=test_objects)
         compute_metrics("no_preserve_no_init_no_schedule", objects=test_objects)
-        #compute_metrics("no_schedule", objects=test_objects)
+        compute_metrics("no_schedule", objects=test_objects)
 
             
 

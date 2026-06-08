@@ -340,11 +340,11 @@ class GSPLY_Handler:
         # transform depth to uint8
         #inputs2 = F.interpolate((inputs2), (img_width, img_height), mode="bilinear", align_corners=False)
         
-        mask = inputs3 > 0.15
+        #mask = inputs3 > 0.15
         #mask = inputs2 < 10.0
-        print("MIN: " + str(inputs2[mask].min()))
-        print("MAX: "  +str(inputs2[mask].max()))
-        print("MEAN: "  +str(inputs2[mask].mean()))
+        #print("MIN: " + str(inputs2[mask].min()))
+        #print("MAX: "  +str(inputs2[mask].max()))
+        #print("MEAN: "  +str(inputs2[mask].mean()))
         norm_factor = None
         ref_min = None
         if ref_depth_norm_fac == None and ref_depth_min == None:
@@ -352,7 +352,7 @@ class GSPLY_Handler:
             norm_factor = (inputs2.max() - inputs2.min()) # * 255
             ref_min = inputs2.min()
             #inputs2 = (inputs2 - inputs2.min()) / (inputs2.max() - inputs2.min()) * 255
-            inputs2 = (inputs2 - ref_min) / norm_factor * 255
+            inputs2 = (inputs2 - ref_min) / norm_factor * 255 # TODO clip to [0, 1] ? 
         else:
             inputs2 = (inputs2 - ref_depth_min) / ref_depth_norm_fac * 255
         # TODO use normalization factor of input for every object

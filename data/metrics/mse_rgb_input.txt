@@ -27,5 +27,15 @@
          orc_warrior: 0.0
            pixel_cat: 0.0
              trumpet: 0.0
+      coffee_machine: 0.0
+               globe: 0.0
+                sofa: 0.0
+            wardrobe: 0.0
+        wooden_bench: 0.0
+              flower: 0.0
+      lego_bulldozer: 0.0
+              onions: 0.0
+           pot_plant: 0.0
+           wood_bowl: 0.0
 
 Mean: 0.0
