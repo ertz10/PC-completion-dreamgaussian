@@ -1,5 +1,6 @@
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch
+from torchvision import transforms
 import PIL
 import numpy as np
 
@@ -69,10 +70,17 @@ def compute_met3r_score(im0, im1, mask):
     inputs = F.interpolate(torch.vstack((im0, im1)), (IMG_SIZE, IMG_SIZE), mode="bilinear", align_corners=False)
     inputs = inputs[:,:3] # strip alpha channel if present
     inputs = inputs.unsqueeze(0).cuda() # size (1, 2, 3, IMG_SIZE, IMG_SIZE)
-    print(inputs.max()) # check what max value is and transfer to [-1, 1]
-    print(inputs.min())
+    
+    mean = 0.5 #im0.mean() # transforms to range [-1, 1]
+    std = 0.5 #im0.std() # transforms to range [-1, 1]
+    normalize_transform = transforms.Normalize(mean, std)
+    im0 = normalize_transform(im0)
+    im1 = normalize_transform(im1)
 
     inputs = inputs.clip(-1, 1)
+
+    print(inputs.max()) # check what max value is and transfer to [-1, 1]
+    print(inputs.min())
 
     score, *_ = metric(
         images=input,

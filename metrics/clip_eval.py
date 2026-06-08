@@ -1,9 +1,12 @@
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch
+from torchvision import transforms
 import PIL
 import numpy as np
 
 import torch.nn.functional as F
+
+
 
 import lpips
 
@@ -12,6 +15,24 @@ import open_clip
 def compute_lpips(im0, im1, mask):
     
     loss_fn = lpips.LPIPS(net='alex')
+
+    #im0 = im0 * 2.0 - 1.0 # to range [-1, 1]
+    #im1 = im1 * 2.0 - 1.0
+
+    mean = 0.5 #im0.mean() # transforms to range [-1, 1]
+    std = 0.5 #im0.std() # transforms to range [-1, 1]
+    normalize_transform = transforms.Normalize(mean, std)
+    im0 = normalize_transform(im0)
+
+    #mean = im1.mean()
+    #std = im1.std()
+    #normalize_transform = transforms.Normalize(mean, std)
+    im1 = normalize_transform(im1)
+
+    #print("IM0 max: ", im0.max())
+    #print("IM0 min: ", im0.min())
+    #print("IM1 max: ", im1.max())
+    #print("IM1 min: ", im1.min())
 
     d = loss_fn.forward(im0 * mask, im1 * mask) # normalize images to [-1, 1] before computing TODO ?
     return d
@@ -79,20 +100,28 @@ def get_image(img_path):
 
 
 def compute_metrics(model='', objects=None, folder_path=''):
-    # ABLATION: no preservation loss
-    if os.path.exists("data/metrics/clip_" + model + ".txt"):
-        os.remove("data/metrics/clip_" + model + ".txt")
-    if os.path.exists("data/metrics/mse_depth_" + model + ".txt"):
-        os.remove("data/metrics/mse_depth_" + model + ".txt")
-    if os.path.exists("data/metrics/mse_rgb_" + model + ".txt"):
-        os.remove("data/metrics/mse_rgb_" + model + ".txt")
+    clip = False
+    mse_rgb = False
+    mse_depth = False
+    lpips = True
 
-    if os.path.exists("data/metrics/lpips_" + model + ".txt"):
-        os.remove("data/metrics/lpips_" + model + ".txt")
+    if clip:
+        if os.path.exists("data/metrics/clip_" + model + ".txt"):
+            os.remove("data/metrics/clip_" + model + ".txt")
+    if mse_depth:
+        if os.path.exists("data/metrics/mse_depth_" + model + ".txt"):
+            os.remove("data/metrics/mse_depth_" + model + ".txt")
+    if mse_rgb:
+        if os.path.exists("data/metrics/mse_rgb_" + model + ".txt"):
+            os.remove("data/metrics/mse_rgb_" + model + ".txt")
+    if lpips:
+        if os.path.exists("data/metrics/lpips_" + model + ".txt"):
+            os.remove("data/metrics/lpips_" + model + ".txt")
 
     clip_scores = []
     mse_depth_scores = []
     mse_rgb_scores = []
+    lpips_scores = []
     # TRELLIS
     for object in objects:
         #print("Max val: ", im0.max())
@@ -146,55 +175,62 @@ def compute_metrics(model='', objects=None, folder_path=''):
         #debug_im5.save("data/metrics/mse_debug_" + str(model) + "/" + str(object) + "/" + str(object) + "_mask.png")#
 
         
+
+        
         imgs = [im0, im1, im2, im3, im4, im5, im6, im7]
         intermed_score = 0.0
         start_index = 0
-        for i in range(0, 4):
-            im0_clip = fn.to_pil_image(imgs[start_index])
-            im1_clip = fn.to_pil_image(imgs[start_index+1])
-            #clip_score = compute_open_clip_score(im0_clip, im1_clip)
-            intermed_score += compute_open_clip_score(im0_clip, im1_clip)
-            #print("start index: " + str(start_index))
-            start_index += 2
-        clip_score = intermed_score / (len(imgs)/2.0)
-        clip_scores = np.append(clip_scores, clip_score.item())
+        if clip:
+            for i in range(0, 4):
+                im0_clip = fn.to_pil_image(imgs[start_index])
+                im1_clip = fn.to_pil_image(imgs[start_index+1])
+                #clip_score = compute_open_clip_score(im0_clip, im1_clip)
+                intermed_score += compute_open_clip_score(im0_clip, im1_clip)
+                #print("start index: " + str(start_index))
+                start_index += 2
+            clip_score = intermed_score / (len(imgs)/2.0)
+            clip_scores = np.append(clip_scores, clip_score.item())
+            with open("data/metrics/clip_" + model + ".txt", "a") as f:
+                for i in range(0, 20 - len(str(object))):
+                    f.write(" ")
+                f.write(str(object) + ": " + str(clip_score.item()) + "\n")
+
+        if mse_depth:
+            mse_depth = compute_mse(depth0, depth1, mask)
+            mse_depth_scores = np.append(mse_depth_scores, mse_depth.item())
+            with open("data/metrics/mse_depth_" + model + ".txt", "a") as f:
+                for i in range(0, 20 - len(str(object))):
+                    f.write(" ")
+                f.write(str(object) + ": " + str(mse_depth.item()) + "\n")
+
+        if mse_rgb:
+            mse_rgb = compute_mse(im0, im1, mask)
+            mse_rgb_scores = np.append(mse_rgb_scores, mse_rgb.item())
+            with open("data/metrics/mse_rgb_" + model + ".txt", "a") as f:
+                for i in range(0, 20 - len(str(object))):
+                    f.write(" ")
+                f.write(str(object) + ": " + str(mse_rgb.item()) + "\n")
+
+        if lpips:
+            lpips = compute_lpips(im0, im1, mask)
+            lpips_scores = np.append(lpips_scores, lpips.item())
+            with open("data/metrics/lpips_" + model + ".txt", "a") as f:
+                for i in range(0, 20 - len(str(object))):
+                    f.write(" ")
+                f.write(str(object) + ": " + str(lpips.item()) + "\n")
+
+    if clip:
         with open("data/metrics/clip_" + model + ".txt", "a") as f:
-            for i in range(0, 20 - len(str(object))):
-                f.write(" ")
-            f.write(str(object) + ": " + str(clip_score.item()) + "\n")
-
-        mse_depth = compute_mse(depth0, depth1, mask)
-        mse_depth_scores = np.append(mse_depth_scores, mse_depth.item())
+            f.write("\nMean: " + str(np.mean(clip_scores)))
+    if mse_depth:
         with open("data/metrics/mse_depth_" + model + ".txt", "a") as f:
-            for i in range(0, 20 - len(str(object))):
-                f.write(" ")
-            f.write(str(object) + ": " + str(mse_depth.item()) + "\n")
-
-        mse_rgb = compute_mse(im0, im1, mask)
-        mse_rgb_scores = np.append(mse_rgb_scores, mse_rgb.item())
+            f.write("\nMean: " + str(np.mean(mse_depth_scores)))
+    if mse_rgb:
         with open("data/metrics/mse_rgb_" + model + ".txt", "a") as f:
-            for i in range(0, 20 - len(str(object))):
-                f.write(" ")
-            f.write(str(object) + ": " + str(mse_rgb.item()) + "\n")
-
-        #lpips = compute_lpips(im0, im1, mask)
-        #lpips_scores = np.append(lpips_scores, lpips.item())
-        #with open("data/metrics/lpips_" + model + ".txt", "a") as f:
-        #    for i in range(0, 20 - len(str(object))):
-        #        f.write(" ")
-        #    f.write(str(object) + ": " + str(lpips.item()) + "\n")
-
-    with open("data/metrics/clip_" + model + ".txt", "a") as f:
-        f.write("\nMean: " + str(np.mean(clip_scores)))
-
-    with open("data/metrics/mse_depth_" + model + ".txt", "a") as f:
-        f.write("\nMean: " + str(np.mean(mse_depth_scores)))
-
-    with open("data/metrics/mse_rgb_" + model + ".txt", "a") as f:
-        f.write("\nMean: " + str(np.mean(mse_rgb_scores)))
-
-    #with open("data/metrics/lpips_" + model + ".txt", "a") as f:
-    #    f.write("\nMean: " + str(np.mean(lpips_scores)))
+            f.write("\nMean: " + str(np.mean(mse_rgb_scores)))
+    if lpips:
+        with open("data/metrics/lpips_" + model + ".txt", "a") as f:
+            f.write("\nMean: " + str(np.mean(lpips_scores)))
 
 
 if __name__ == "__main__":
