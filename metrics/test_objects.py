@@ -79,8 +79,8 @@ if __name__ == "__main__":
     path =                      "../data/BACKUPS/full_pipe/"
     image_folder_path =         "../data/test_images/" + test + "/"
     image_suffix =              "_" + test
-    #obj_suffix =                "_cropped.ply"
-    obj_suffix =                "_static.ply"
+    obj_suffix =                "_cropped.ply"
+    #obj_suffix =                "_static.ply"
 
     opt_alignment_prefix =      None
     mesh_path =                 None
@@ -236,16 +236,15 @@ if __name__ == "__main__":
     #test_capsules = [test_capsule_nplnoinos]
 
     # use with input _cropped
-    #test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", 
-    #                "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", 
-    #                "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish",
-    #                "bear", "bicycle", "bonsai", "garden_desk", "train", "truck",
-    #                "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
+    test_objects = ["shoe", "couch_blender", "vase", "elephant", "hocker", "banana_tuna", 
+                    "chicken", "plant", "pumpkins", "knife_block", "rubiks_cube", "headset", 
+                    "leather_book", "hat", "sponge", "coffee_mug", "bread", "fish",
+                    "bear", "bicycle", "bonsai", "garden_desk", "train", "truck",
+                    "diner_seats", "flip_flop", "orc_warrior", "pixel_cat", "trumpet"]
                 
     # use with input _static
-    test_objects = ["coffee_machine", "globe", "sofa", "wardrobe", "wooden_bench",
-                    "flower", "lego_bulldozer", "onions", "pot_plant", "wood_bowl"]
-    
+    #test_objects = ["coffee_machine", "globe", "sofa", "wardrobe", "wooden_bench",
+    #                "flower", "lego_bulldozer", "onions", "pot_plant", "wood_bowl"]
     
     #test_objects = ["bear", "bicycle", "bonsai", "garden_desk", "train", "truck", "banana_tuna"] # run again with _cropped instead of _static
     

@@ -354,7 +354,8 @@ class GSPLY_Handler:
             #inputs2 = (inputs2 - inputs2.min()) / (inputs2.max() - inputs2.min()) * 255
             inputs2 = (inputs2 - ref_min) / norm_factor * 255 # TODO clip to [0, 1] ? 
         else:
-            inputs2 = (inputs2 - ref_depth_min) / ref_depth_norm_fac * 255
+            #inputs2 = (inputs2 - ref_depth_min) / ref_depth_norm_fac * 255
+            inputs2 = torch.clip((inputs2 - ref_depth_min), 0, 100) / ref_depth_norm_fac * 255 # prevent from overflow or underflow ? -> inputs2.min() could be smaller than ref_depth_min
         # TODO use normalization factor of input for every object
         #inputs2[mask] = (inputs2[mask] - inputs2[mask].min()) / (inputs2[mask].max() - inputs2[mask].min()) * 255
         

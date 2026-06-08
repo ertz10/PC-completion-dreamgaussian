@@ -83,7 +83,7 @@ def compute_met3r_score(im0, im1, mask):
     print(inputs.min())
 
     score, *_ = metric(
-        images=input,
+        images=inputs,
         return_overlap_mask=False,
         return_score_map=False,
         return_projection=False
